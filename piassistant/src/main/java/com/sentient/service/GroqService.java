@@ -177,6 +177,17 @@ public class GroqService {
                         "— Alarms:\n" +
                         "- [CMD:SET_ALARM:HH:mm] — Set an alarm (e.g. [CMD:SET_ALARM:07:30])\n" +
                         "- [CMD:DELETE_ALARM:HH:mm] — Delete an alarm\n" +
+                        "— Credentials (vault):\n" +
+                        "- [CMD:USE_CREDENTIAL:name] — Open the saved service login for `name` and auto-fill it on the user's current device. " +
+                        "You NEVER see the password — it's pulled from the vault and handed to the browser directly. " +
+                        "Only use this when the user explicitly asks to sign in / open a saved login. " +
+                        (CredentialVault.current() == null || CredentialVault.current().credentialNames().isEmpty()
+                                ? "(No credentials saved yet.)\n"
+                                : ("Saved credential names: " + String.join(", ", CredentialVault.current().credentialNames()) + ".\n")) +
+                        (CredentialVault.current() == null || CredentialVault.current().envVarNames().isEmpty()
+                                ? ""
+                                : ("Available env-var names (values stay on the master, never disclose them): "
+                                        + String.join(", ", CredentialVault.current().envVarNames()) + ".\n")) +
                         "— Conversation:\n" +
                         "- [CMD:CONTINUE_CONVERSATION] — Include this when you believe the user wants to keep talking "
                         +

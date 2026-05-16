@@ -205,7 +205,60 @@ These routes work without a token (so OAuth + login can complete):
 - `/api/auth/status`, `/api/auth/login`
 - `/api/spotify/callback`, `/api/tasks/google/callback`
 
-## 8. End-to-end checklist
+## 8. The credential vault (sync across instances)
+
+`Settings → VAULT · CREDENTIALS & ENV VARS` is the single source of truth for
+two kinds of secrets:
+
+1. **Service logins** — `name + URL + username + password + notes`. Passwords
+   are encrypted at rest with AES-256-GCM (key at `~/.sentient_vault_key`,
+   mode `0600`). The REST API returns them masked. The plaintext only flows
+   over a one-shot WebSocket `autofill_request` message when you (or the AI)
+   triggers `USE`.
+2. **Environment variables** — flat name/value pairs that automation and
+   subprocess-spawning tools can consume. Values come back unmasked to the
+   authenticated UI because that's how env vars get used.
+
+### Sync
+
+The vault lives on the master only. Every browser that connects pulls from
+the same `/api/vault/*` endpoints, so every logged-in device sees the same
+list. After any mutation the master broadcasts `{type:"vault_updated"}` over
+WebSocket so other tabs re-fetch immediately — no refresh needed.
+
+### How the AI uses credentials without seeing them
+
+The system prompt for both Groq and OpenClaw lists the *names* of saved
+credentials (e.g. `gmail, amazon, github`). The AI never receives the
+passwords. When the assistant decides to sign you in, it emits:
+
+```
+[CMD:USE_CREDENTIAL:gmail]
+```
+
+The master intercepts that, looks up the credential, and broadcasts an
+`autofill_request` WebSocket message to your browsers. The currently-visible
+tab opens an in-app overlay with the URL + click-to-copy buttons for username
+and password. (Browsers block cross-origin form fill, so the actual paste is
+one click — see `DEVICE_CONTROL.md` for the path to fully-automatic injection
+via a native helper.)
+
+### Env-var consumption
+
+Today the env vars are stored and synced but not yet auto-injected into
+OpenClaw's config block or the automation webhooks. Adding the `{{VAR_NAME}}`
+substitution path in `AutomationService` and `OpenClawConfigManager` is a
+short follow-up — see `CredentialVault.getEnvVar`.
+
+### Why store secrets on the master rather than a hosted vault?
+
+- The master is already trusted with every API key and OAuth refresh token.
+- No third-party dependency or rate limit.
+- Browser-side `localStorage` is the wrong place because it doesn't sync
+  cross-device, and a public Funnel URL means it would be exposed to anyone
+  with the password.
+
+## 9. End-to-end checklist
 
 A fresh master device, fully wired:
 
@@ -220,7 +273,7 @@ A fresh master device, fully wired:
 That's it. From any of those devices you should be able to chat, run skills via
 Composio, and control Spotify/Tasks/Calendar even when you're not on the LAN.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
@@ -230,3 +283,5 @@ Composio, and control Spotify/Tasks/Calendar even when you're not on the LAN.
 | Remote badge says `REMOTE UNREACHABLE` | Wrong URL, firewall blocks the port, or the remote gateway isn't bound to `0.0.0.0`. Try `curl http://<remote>:18789/v1/models -H "Authorization: Bearer <token>"` from the master. |
 | Funnel button does nothing | Tailscale isn't logged in. Run `tailscale up` on the master, then refresh. |
 | Login screen loops | Token mismatch with the server. Clear `localStorage.sentient_token` and try again. |
+| Vault entries gone after restart | `~/.sentient_vault_key` was deleted or replaced. The encrypted blob in `~/.sentient_vault.json` can no longer be decoded — restore both files together or re-enter the vault contents. |
+| Auto-fill overlay never shows up | Master couldn't deliver the WS message — check that the calling tab is connected (online indicator in the sidebar), and that the token in `localStorage` is still valid. |

@@ -622,6 +622,40 @@
                     </label>
                 </div>
 
+                <!-- ── Credential vault (env vars + service logins) ── -->
+                <div class="settings-group" id="settingsVault">
+                    <div class="panel-sub-header">VAULT · CREDENTIALS &amp; ENV VARS</div>
+                    <div class="setting-hint">
+                        The vault lives on the master device. Every browser logged into the same master
+                        sees the same entries — that's the sync. Add anywhere, see it everywhere.
+                        The AI knows credential <em>names</em> but never receives raw passwords; when
+                        it runs <code>[CMD:USE_CREDENTIAL:name]</code> the master ships the secret
+                        straight to your active browser tab, which offers click-to-paste auto-fill.
+                    </div>
+
+                    <div class="vault-section">
+                        <div class="vault-sub-header">SERVICE LOGINS</div>
+                        <div class="vault-add-form">
+                            <input type="text" class="form-input setting-input vault-cred-name" id="vaultCredName" placeholder="name (e.g. gmail)" autocomplete="off">
+                            <input type="text" class="form-input setting-input vault-cred-url" id="vaultCredUrl" placeholder="https://accounts.google.com/" autocomplete="off">
+                            <input type="text" class="form-input setting-input vault-cred-user" id="vaultCredUser" placeholder="username / email" autocomplete="off">
+                            <input type="password" class="form-input setting-input vault-cred-pw" id="vaultCredPw" placeholder="password" autocomplete="new-password">
+                            <button class="timer-btn play-btn" id="vaultCredSaveBtn">SAVE</button>
+                        </div>
+                        <div class="vault-list" id="vaultCredList"></div>
+                    </div>
+
+                    <div class="vault-section">
+                        <div class="vault-sub-header">ENVIRONMENT VARIABLES</div>
+                        <div class="vault-add-form">
+                            <input type="text" class="form-input setting-input vault-env-name" id="vaultEnvName" placeholder="NAME (e.g. STRIPE_API_KEY)" autocomplete="off">
+                            <input type="password" class="form-input setting-input vault-env-value" id="vaultEnvValue" placeholder="value" autocomplete="new-password">
+                            <button class="timer-btn play-btn" id="vaultEnvSaveBtn">SAVE</button>
+                        </div>
+                        <div class="vault-list" id="vaultEnvList"></div>
+                    </div>
+                </div>
+
                 <!-- ── Connected devices (cross-tab screen capture) ── -->
                 <div class="settings-group" id="settingsDevices">
                     <div class="panel-sub-header">CONNECTED DEVICES</div>

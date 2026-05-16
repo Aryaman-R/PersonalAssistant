@@ -335,6 +335,15 @@ public class OpenClawService {
                 "- [CMD:CREATE_PLAYLIST:name] — Spotify playlist\n" +
                 "- [CMD:AUTOMATE:name] — fire a configured webhook\n" +
                 "- [CMD:SET_ALARM:HH:mm] / [CMD:DELETE_ALARM:HH:mm] — alarms\n" +
+                "- [CMD:USE_CREDENTIAL:name] — open a saved service login + auto-fill on the user's device. " +
+                "You NEVER see the password; the master injects it into the browser. " +
+                (CredentialVault.current() == null || CredentialVault.current().credentialNames().isEmpty()
+                        ? "(No credentials saved yet.)\n"
+                        : ("Saved credentials: " + String.join(", ", CredentialVault.current().credentialNames()) + ".\n")) +
+                (CredentialVault.current() == null || CredentialVault.current().envVarNames().isEmpty()
+                        ? ""
+                        : ("Env vars on master (names only): "
+                                + String.join(", ", CredentialVault.current().envVarNames()) + ".\n")) +
                 "- [CMD:CONTINUE_CONVERSATION] — include when the user likely wants to keep talking\n" +
                 "\nCurrent tasks: " + taskSummary + ".\n" +
                 "Current commitments: " + String.join(", ", p.commitments) + ".\n" +

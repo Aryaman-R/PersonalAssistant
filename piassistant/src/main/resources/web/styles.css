@@ -2656,3 +2656,66 @@ body {
     font-size: 11px;
     letter-spacing: 0.12em;
 }
+/* ── Vault (credentials + env vars) ─────────────────── */
+.vault-section { margin-top: 14px; }
+.vault-sub-header {
+    font-size: 11px; letter-spacing: 0.18em; color: var(--text-secondary);
+    margin: 14px 0 8px;
+}
+.vault-add-form {
+    display: grid; gap: 6px; grid-template-columns: 1fr 1fr 1fr 1fr auto;
+    margin-bottom: 10px;
+}
+.vault-add-form .setting-input { width: 100%; }
+.vault-list { display: flex; flex-direction: column; gap: 6px; }
+.vault-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px; background: var(--bg-item); border: 1px solid var(--border-dark);
+    border-radius: 6px;
+}
+.vault-row-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.vault-row-name { color: var(--accent-green); font-weight: 600; letter-spacing: 0.08em; }
+.vault-row-meta { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-row-actions { display: flex; gap: 6px; }
+.vault-row-actions .timer-btn { padding: 4px 10px; font-size: 11px; }
+
+/* ── Devices list ────────────────────────────────────── */
+.devices-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.device-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 10px; background: var(--bg-item);
+    border: 1px solid var(--border-dark); border-radius: 6px;
+}
+.device-name { color: var(--accent-blue); font-weight: 600; }
+.device-meta { color: var(--text-muted); font-size: 12px; flex: 1; }
+
+/* ── Autofill overlay ────────────────────────────────── */
+.autofill-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 99999;
+}
+.autofill-card {
+    background: var(--bg-panel); border: 1px solid var(--border-light);
+    border-radius: 12px; padding: 22px; min-width: 380px; max-width: 520px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+}
+.autofill-title { color: var(--accent-green); letter-spacing: 0.12em; font-weight: 700; margin-bottom: 6px; }
+.autofill-url { color: var(--text-secondary); font-size: 12px; margin-bottom: 12px; word-break: break-all; }
+.autofill-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 0; border-bottom: 1px dashed var(--border-dark);
+}
+.autofill-row span { width: 76px; color: var(--text-muted); font-size: 11px; letter-spacing: 0.1em; }
+.autofill-row code {
+    flex: 1; background: var(--bg-input); padding: 4px 8px; border-radius: 4px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.autofill-row button {
+    background: var(--bg-hover); color: var(--text-primary);
+    border: 1px solid var(--border-medium); border-radius: 4px;
+    padding: 3px 9px; font: inherit; font-size: 10px; cursor: pointer;
+}
+.autofill-actions { display: flex; gap: 8px; margin-top: 12px; }
+.autofill-hint { color: var(--text-muted); font-size: 11px; margin-top: 10px; line-height: 1.5; }

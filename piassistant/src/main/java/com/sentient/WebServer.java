@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.sentient.service.AuthService;
 import com.sentient.service.AutomationService;
+import com.sentient.service.CredentialVault;
 import com.sentient.service.GoogleTasksService;
 import com.sentient.service.GoogleCalendarService;
 import com.sentient.service.GroqService;
@@ -48,6 +49,7 @@ public class WebServer {
     private final GoogleCalendarService googleCalendar;
     private final TailscaleService tailscale;
     private final AuthService auth;
+    private final CredentialVault vault;
     private Listener listener;
 
     // Active WebSocket clients
@@ -72,6 +74,7 @@ public class WebServer {
         this.googleCalendar = new GoogleCalendarService();
         this.tailscale = new TailscaleService();
         this.auth = new AuthService();
+        this.vault = new CredentialVault();
 
         this.app = Javalin.create(config -> {
             config.staticFiles.add("/web", Location.CLASSPATH);
@@ -370,6 +373,12 @@ public class WebServer {
         }
     }
 
+    private void broadcastVaultUpdated() {
+        JsonObject msg = new JsonObject();
+        msg.addProperty("type", "vault_updated");
+        broadcast(msg);
+    }
+
     private void broadcastDeviceList() {
         JsonObject msg = new JsonObject();
         msg.addProperty("type", "device_list");
@@ -535,6 +544,34 @@ public class WebServer {
                     cmdMsg.addProperty("action", "ADD_COMMITMENT");
                     cmdMsg.addProperty("param", commitText);
                     broadcast(cmdMsg);
+                    continue;
+                }
+
+                // Handle USE_CREDENTIAL server-side — send the password to the
+                // requester's tab as an autofill_request. The AI never sees it.
+                if ("USE_CREDENTIAL".equals(cmd[0]) && cmd[1] != null) {
+                    String credName = cmd[1].trim();
+                    JsonObject snap = vault.autofillSnapshot(credName);
+                    JsonObject cmdMsg = new JsonObject();
+                    cmdMsg.addProperty("type", "command");
+                    cmdMsg.addProperty("action", "USE_CREDENTIAL");
+                    cmdMsg.addProperty("param", credName);
+                    if (snap == null) {
+                        cmdMsg.addProperty("error", "No credential named '" + credName + "' in the vault.");
+                        broadcast(cmdMsg);
+                    } else {
+                        cmdMsg.addProperty("success", true);
+                        broadcast(cmdMsg);
+                        // Separately send the actual auto-fill payload (with the password).
+                        // Broadcast so whichever logged-in device is in front of the user picks it up.
+                        JsonObject autofill = new JsonObject();
+                        autofill.addProperty("type", "autofill_request");
+                        autofill.addProperty("name", snap.get("name").getAsString());
+                        autofill.addProperty("url", snap.get("url").getAsString());
+                        autofill.addProperty("username", snap.get("username").getAsString());
+                        autofill.addProperty("password", snap.get("password").getAsString());
+                        broadcast(autofill);
+                    }
                     continue;
                 }
 
@@ -1459,6 +1496,72 @@ public class WebServer {
             com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
             for (JsonObject m : deviceMeta.values()) arr.add(m);
             ctx.json(arr);
+        });
+
+        // ── Credential vault (env vars + service logins) ───────
+        // Every mutation broadcasts {type:"vault_updated"} so every connected
+        // device knows to refetch — that's how "sync across instances" works.
+        app.get("/api/vault/env", ctx -> {
+            com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+            for (JsonObject o : vault.listEnvVars()) arr.add(o);
+            ctx.json(arr);
+        });
+        app.post("/api/vault/env", ctx -> {
+            JsonObject body = gson.fromJson(ctx.body(), JsonObject.class);
+            String name = getStr(body, "name", "").trim();
+            String value = getStr(body, "value", "");
+            if (name.isEmpty()) { ctx.status(400).result("{\"error\":\"'name' required\"}"); return; }
+            vault.setEnvVar(name, value);
+            broadcastVaultUpdated();
+            ctx.status(200).result("{\"success\":true}");
+        });
+        app.delete("/api/vault/env/{name}", ctx -> {
+            boolean removed = vault.removeEnvVar(ctx.pathParam("name"));
+            if (removed) broadcastVaultUpdated();
+            ctx.status(removed ? 200 : 404).result("{\"success\":" + removed + "}");
+        });
+
+        app.get("/api/vault/credentials", ctx -> {
+            ctx.result(vault.listCredentialsMasked().toString());
+            ctx.contentType("application/json");
+        });
+        app.post("/api/vault/credentials", ctx -> {
+            JsonObject body = gson.fromJson(ctx.body(), JsonObject.class);
+            String name = getStr(body, "name", "").trim();
+            if (name.isEmpty()) { ctx.status(400).result("{\"error\":\"'name' required\"}"); return; }
+            // Pass null for password when the field is absent so existing password is preserved.
+            String url = getStr(body, "url", "");
+            String username = getStr(body, "username", "");
+            String notes = getStr(body, "notes", "");
+            String password = body.has("password") && !body.get("password").isJsonNull()
+                    ? body.get("password").getAsString() : null;
+            vault.setCredential(name, url, username, password, notes);
+            broadcastVaultUpdated();
+            ctx.status(200).result("{\"success\":true}");
+        });
+        app.delete("/api/vault/credentials/{name}", ctx -> {
+            boolean removed = vault.removeCredential(ctx.pathParam("name"));
+            if (removed) broadcastVaultUpdated();
+            ctx.status(removed ? 200 : 404).result("{\"success\":" + removed + "}");
+        });
+
+        // Server-side "use credential": never returns the password as text to
+        // the caller. Sends an autofill_request message to a chosen device.
+        app.post("/api/vault/use", ctx -> {
+            JsonObject body = gson.fromJson(ctx.body(), JsonObject.class);
+            String name = getStr(body, "name", "");
+            String targetSession = getStr(body, "targetSessionId", "");
+            JsonObject snap = vault.autofillSnapshot(name);
+            if (snap == null) { ctx.status(404).result("{\"error\":\"unknown credential\"}"); return; }
+            JsonObject msg = new JsonObject();
+            msg.addProperty("type", "autofill_request");
+            msg.addProperty("name", snap.get("name").getAsString());
+            msg.addProperty("url", snap.get("url").getAsString());
+            msg.addProperty("username", snap.get("username").getAsString());
+            msg.addProperty("password", snap.get("password").getAsString());
+            if (!targetSession.isEmpty()) sendToSession(targetSession, msg);
+            else broadcast(msg);
+            ctx.status(200).result("{\"success\":true}");
         });
 
         // ── Tailscale (Funnel) Endpoints ───────────────────────

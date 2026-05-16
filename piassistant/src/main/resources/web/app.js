@@ -488,6 +488,14 @@ function handleWSMessage(msg) {
             }
             break;
         }
+        case 'vault_updated':
+            // Some other device mutated the vault — re-fetch so this tab stays in sync.
+            if (typeof refreshVaultCredentials === 'function') refreshVaultCredentials();
+            if (typeof refreshVaultEnvVars === 'function') refreshVaultEnvVars();
+            break;
+        case 'autofill_request':
+            if (typeof showAutofillOverlay === 'function') showAutofillOverlay(msg);
+            break;
     }
 }
 
@@ -2934,6 +2942,171 @@ if (tailscaleEnableBtn) tailscaleEnableBtn.addEventListener('click', () => toggl
 if (tailscaleDisableBtn) tailscaleDisableBtn.addEventListener('click', () => toggleFunnel(false));
 // Initial probe (cheap GET; safe if backend isn't reachable)
 setTimeout(refreshTailscaleStatus, 1500);
+
+// ── Vault UI (credentials + env vars) ───────────────────
+const vaultCredName = document.getElementById('vaultCredName');
+const vaultCredUrl = document.getElementById('vaultCredUrl');
+const vaultCredUser = document.getElementById('vaultCredUser');
+const vaultCredPw = document.getElementById('vaultCredPw');
+const vaultCredSaveBtn = document.getElementById('vaultCredSaveBtn');
+const vaultCredList = document.getElementById('vaultCredList');
+const vaultEnvName = document.getElementById('vaultEnvName');
+const vaultEnvValue = document.getElementById('vaultEnvValue');
+const vaultEnvSaveBtn = document.getElementById('vaultEnvSaveBtn');
+const vaultEnvList = document.getElementById('vaultEnvList');
+
+async function refreshVaultCredentials() {
+    if (!vaultCredList) return;
+    try {
+        const r = await fetch(api('/api/vault/credentials'));
+        const list = await r.json();
+        if (!list.length) {
+            vaultCredList.innerHTML = '<div class="setting-hint">No saved logins yet.</div>';
+            return;
+        }
+        vaultCredList.innerHTML = list.map(c => `
+            <div class="vault-row">
+                <div class="vault-row-main">
+                    <span class="vault-row-name">${escapeHtml(c.name)}</span>
+                    <span class="vault-row-meta">${escapeHtml(c.username || '')} ${c.url ? '· ' + escapeHtml(c.url) : ''}</span>
+                </div>
+                <div class="vault-row-actions">
+                    <button class="timer-btn play-btn" data-action="vault-use-cred" data-name="${escapeHtml(c.name)}">USE</button>
+                    <button class="timer-btn cancel-btn" data-action="vault-delete-cred" data-name="${escapeHtml(c.name)}">DELETE</button>
+                </div>
+            </div>`).join('');
+        vaultCredList.querySelectorAll('[data-action="vault-use-cred"]').forEach(b => {
+            b.addEventListener('click', () => useCredential(b.dataset.name));
+        });
+        vaultCredList.querySelectorAll('[data-action="vault-delete-cred"]').forEach(b => {
+            b.addEventListener('click', () => deleteCredential(b.dataset.name));
+        });
+    } catch (e) {
+        vaultCredList.innerHTML = '<div class="setting-hint error">Could not load credentials.</div>';
+    }
+}
+async function refreshVaultEnvVars() {
+    if (!vaultEnvList) return;
+    try {
+        const r = await fetch(api('/api/vault/env'));
+        const list = await r.json();
+        if (!list.length) {
+            vaultEnvList.innerHTML = '<div class="setting-hint">No env vars saved yet.</div>';
+            return;
+        }
+        vaultEnvList.innerHTML = list.map(e => `
+            <div class="vault-row">
+                <div class="vault-row-main">
+                    <span class="vault-row-name">${escapeHtml(e.name)}</span>
+                    <span class="vault-row-meta">${e.value ? '••••' + escapeHtml(e.value.slice(-4)) : '(empty)'}</span>
+                </div>
+                <div class="vault-row-actions">
+                    <button class="timer-btn cancel-btn" data-action="vault-delete-env" data-name="${escapeHtml(e.name)}">DELETE</button>
+                </div>
+            </div>`).join('');
+        vaultEnvList.querySelectorAll('[data-action="vault-delete-env"]').forEach(b => {
+            b.addEventListener('click', () => deleteEnvVar(b.dataset.name));
+        });
+    } catch (e) {
+        vaultEnvList.innerHTML = '<div class="setting-hint error">Could not load env vars.</div>';
+    }
+}
+async function saveCredentialFromForm() {
+    const name = (vaultCredName.value || '').trim();
+    if (!name) return;
+    const body = {
+        name,
+        url: (vaultCredUrl.value || '').trim(),
+        username: (vaultCredUser.value || '').trim(),
+        password: vaultCredPw.value, // empty string → keep existing
+    };
+    await fetch(api('/api/vault/credentials'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    vaultCredName.value = vaultCredUrl.value = vaultCredUser.value = vaultCredPw.value = '';
+    refreshVaultCredentials();
+}
+async function deleteCredential(name) {
+    if (!confirm(`Delete credential "${name}"?`)) return;
+    await fetch(api('/api/vault/credentials/' + encodeURIComponent(name)), { method: 'DELETE' });
+    refreshVaultCredentials();
+}
+async function useCredential(name) {
+    // Server will broadcast an autofill_request message to all logged-in devices.
+    await fetch(api('/api/vault/use'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, targetSessionId: tabSessionId })
+    });
+}
+async function saveEnvVarFromForm() {
+    const name = (vaultEnvName.value || '').trim();
+    if (!name) return;
+    await fetch(api('/api/vault/env'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, value: vaultEnvValue.value })
+    });
+    vaultEnvName.value = vaultEnvValue.value = '';
+    refreshVaultEnvVars();
+}
+async function deleteEnvVar(name) {
+    if (!confirm(`Delete env var "${name}"?`)) return;
+    await fetch(api('/api/vault/env/' + encodeURIComponent(name)), { method: 'DELETE' });
+    refreshVaultEnvVars();
+}
+if (vaultCredSaveBtn) vaultCredSaveBtn.addEventListener('click', saveCredentialFromForm);
+if (vaultEnvSaveBtn) vaultEnvSaveBtn.addEventListener('click', saveEnvVarFromForm);
+setTimeout(() => { refreshVaultCredentials(); refreshVaultEnvVars(); }, 1500);
+
+// Auto-fill overlay shown when an autofill_request lands on this tab.
+function showAutofillOverlay(payload) {
+    // Remove any existing overlay first.
+    document.querySelectorAll('.autofill-overlay').forEach(n => n.remove());
+    const el = document.createElement('div');
+    el.className = 'autofill-overlay';
+    el.innerHTML = `
+        <div class="autofill-card">
+            <div class="autofill-title">SIGN IN: ${escapeHtml(payload.name || '')}</div>
+            <div class="autofill-url">${escapeHtml(payload.url || '')}</div>
+            <div class="autofill-row"><span>username</span>
+                <code id="afu">${escapeHtml(payload.username || '')}</code>
+                <button data-act="copy-u">COPY</button></div>
+            <div class="autofill-row"><span>password</span>
+                <code id="afp">${'•'.repeat(Math.min(16, (payload.password || '').length || 8))}</code>
+                <button data-act="copy-p">COPY</button>
+                <button data-act="reveal-p">REVEAL</button></div>
+            <div class="autofill-actions">
+                <button class="timer-btn play-btn" data-act="open">OPEN URL</button>
+                <button class="timer-btn cancel-btn" data-act="close">CLOSE</button>
+            </div>
+            <div class="autofill-hint">
+                Cross-origin scripting is blocked — paste manually after clicking OPEN URL.
+                Some browsers' password managers will offer to fill the saved entry directly.
+            </div>
+        </div>`;
+    document.body.appendChild(el);
+    let revealed = false;
+    el.querySelector('[data-act="copy-u"]').addEventListener('click', () => {
+        navigator.clipboard.writeText(payload.username || '');
+    });
+    el.querySelector('[data-act="copy-p"]').addEventListener('click', () => {
+        navigator.clipboard.writeText(payload.password || '');
+    });
+    el.querySelector('[data-act="reveal-p"]').addEventListener('click', () => {
+        const code = el.querySelector('#afp');
+        revealed = !revealed;
+        code.textContent = revealed ? (payload.password || '') : '•'.repeat(Math.min(16, (payload.password || '').length || 8));
+    });
+    el.querySelector('[data-act="open"]').addEventListener('click', () => {
+        if (payload.url) window.open(payload.url, '_blank', 'noopener');
+    });
+    el.querySelector('[data-act="close"]').addEventListener('click', () => el.remove());
+    // Auto-dismiss after 60s as a safety so passwords don't linger on screen.
+    setTimeout(() => el.remove(), 60000);
+}
 
 // ── Connected devices settings UI ───────────────────────
 const deviceNameInput = document.getElementById('deviceNameInput');
