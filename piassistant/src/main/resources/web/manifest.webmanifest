@@ -1,0 +1,14 @@
+{
+  "name": "Sentient Assistant",
+  "short_name": "Sentient",
+  "description": "AI-powered personal assistant with focus timer, task management, and voice control",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
+  "icons": [
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "maskable" }
+  ]
+}
