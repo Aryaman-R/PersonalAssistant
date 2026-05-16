@@ -24,3 +24,9 @@ claude/
 
 .claude
 .claude/
+
+# Claude working notes — kept locally, never committed
+reference.md
+CLAUDE.md
+.cursor/
+.cursorrules
