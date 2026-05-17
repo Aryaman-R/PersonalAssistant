@@ -172,6 +172,9 @@ Frontend hot-reload isn't wired — the static files are bundled into the jar at
 
 ## Further reading
 
+- **`RUNNING.md`** — end-to-end setup guide: prereqs, build, first launch, OAuth wiring, Tailscale, the macOS helper, troubleshooting.
+- **`Phase3.md`** — cross-device control design + per-track test walkthrough (`VIEW_DEVICE`, WebRTC mirror, remote actions, consent, native helper).
+- **`SETUP_OPENCLAW.md`** — OpenClaw provider config, remote-gateway mode, Composio MCP wiring, shared-password auth.
 - **`ARCHITECTURE.md`** — module map, WebSocket message contract, REST surface, continuity issues.
 - **`reference.md`** — short, no-nonsense reference used by Claude when working in this repo.
 
