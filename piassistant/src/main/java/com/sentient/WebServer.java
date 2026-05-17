@@ -56,6 +56,13 @@ public class WebServer {
     private final Set<WsContext> clients = ConcurrentHashMap.newKeySet();
     /** Per-WS-session metadata: deviceName, capabilities, lastSeen. */
     private final java.util.Map<String, JsonObject> deviceMeta = new ConcurrentHashMap<>();
+    /** Native helper sessions keyed by sessionId; separate from browser {@code clients}. */
+    private final java.util.Map<String, WsContext> helperClients = new ConcurrentHashMap<>();
+    /** Per-helper-session metadata: name, platform, capabilities. */
+    private final java.util.Map<String, JsonObject> helperMeta = new ConcurrentHashMap<>();
+    /** One-shot listeners for VIEW_DEVICE / screen_frame round-trips, keyed by requestId. */
+    private final java.util.Map<String, java.util.concurrent.CompletableFuture<String>> pendingScreenCaptures =
+            new ConcurrentHashMap<>();
     private String currentSessionId = "";
 
     // Response control — for stop/interrupt
@@ -339,20 +346,63 @@ public class WebServer {
                         // Device replies with a captured frame — relay back to requester.
                         String requester = msg.has("requesterSessionId")
                                 ? msg.get("requesterSessionId").getAsString() : "";
-                        sendToSession(requester, msg);
+                        if (!requester.isEmpty()) sendToSession(requester, msg);
+
+                        // VIEW_DEVICE round-trip: resolve any pending future waiting on this requestId.
+                        String reqId = msg.has("requestId") && !msg.get("requestId").isJsonNull()
+                                ? msg.get("requestId").getAsString() : null;
+                        if (reqId != null) {
+                            java.util.concurrent.CompletableFuture<String> pending =
+                                    pendingScreenCaptures.remove(reqId);
+                            if (pending != null) {
+                                String frame = msg.has("frame") && !msg.get("frame").isJsonNull()
+                                        ? msg.get("frame").getAsString() : "";
+                                if (frame.isEmpty() || !(msg.has("ok") && msg.get("ok").getAsBoolean())) {
+                                    pending.completeExceptionally(
+                                            new java.util.concurrent.CancellationException(
+                                                    "Device returned no frame (capture denied or failed)."));
+                                } else {
+                                    pending.complete(frame);
+                                }
+                            }
+                        }
                         break;
                     }
                     case "remote_action": {
-                        // Stub: relay a control request (typed text / URL open) to the target device.
-                        // Browsers can't inject OS keystrokes — this is for in-tab actions only
-                        // (e.g. "open a URL", "switch panel"). See DEVICE_CONTROL.md.
+                        // Relay a control request to the target device.
+                        // Browsers can act on `OPEN_URL` and `SWITCH_PANEL`. The native helper
+                        // additionally handles `TYPE_TEXT`, `CLICK_AT`, `LAUNCH_APP`, `KEY_COMBO`.
+                        // See DEVICE_CONTROL.md.
                         String target = msg.has("targetSessionId") ? msg.get("targetSessionId").getAsString() : "";
                         JsonObject fwd = new JsonObject();
                         fwd.addProperty("type", "remote_action");
                         if (msg.has("action")) fwd.add("action", msg.get("action"));
-                        if (msg.has("payload")) fwd.add("payload", msg.get("payload"));
+                        // Forward the well-known per-action fields verbatim.
+                        for (String k : new String[]{"url", "panel", "text", "bundleId", "keys", "x", "y", "payload"}) {
+                            if (msg.has(k)) fwd.add(k, msg.get(k));
+                        }
+                        String fromDevice = msg.has("fromDevice") ? msg.get("fromDevice").getAsString() : "";
+                        if (fromDevice.isEmpty()) {
+                            JsonObject meta = deviceMeta.get(ctx.sessionId());
+                            fromDevice = meta != null && meta.has("name") ? meta.get("name").getAsString() : "another device";
+                        }
+                        fwd.addProperty("fromDevice", fromDevice);
                         fwd.addProperty("requesterSessionId", ctx.sessionId());
-                        sendToSession(target, fwd);
+                        if (helperClients.containsKey(target)) {
+                            forwardToHelper(target, fwd);
+                        } else {
+                            sendToSession(target, fwd);
+                        }
+                        break;
+                    }
+                    case "webrtc_offer":
+                    case "webrtc_answer":
+                    case "ice_candidate": {
+                        // Pure signalling relay — server has no view of the SDP, just shuttles it.
+                        String targetId = msg.has("targetSessionId") && !msg.get("targetSessionId").isJsonNull()
+                                ? msg.get("targetSessionId").getAsString() : "";
+                        if (targetId.isEmpty()) break;
+                        sendToSession(targetId, msg);
                         break;
                     }
                     default:
@@ -360,6 +410,103 @@ public class WebServer {
                 }
             });
         });
+
+        // Native OS helper WS endpoint — only the per-device helper CLI connects here.
+        // Kept separate from /ws so helpers aren't included in browser broadcasts.
+        app.ws("/helper", ws -> {
+            ws.onConnect(ctx -> {
+                if (auth.isAuthRequired()) {
+                    String tok = ctx.queryParam("token");
+                    if (tok == null) tok = ctx.header("X-Sentient-Token");
+                    if (!auth.isValidToken(tok)) {
+                        System.out.println("[Helper] Rejecting unauthenticated connect.");
+                        try { ctx.closeSession(); } catch (Exception ignored) {}
+                        return;
+                    }
+                }
+                helperClients.put(ctx.sessionId(), ctx);
+                System.out.println("[Helper] connected: " + ctx.sessionId());
+            });
+            ws.onClose(ctx -> {
+                helperClients.remove(ctx.sessionId());
+                helperMeta.remove(ctx.sessionId());
+                System.out.println("[Helper] disconnected: " + ctx.sessionId());
+            });
+            ws.onMessage(ctx -> {
+                try {
+                    JsonObject msg = gson.fromJson(ctx.message(), JsonObject.class);
+                    String type = msg.has("type") ? msg.get("type").getAsString() : "";
+                    switch (type) {
+                        case "register_helper": {
+                            JsonObject meta = new JsonObject();
+                            meta.addProperty("sessionId", ctx.sessionId());
+                            meta.addProperty("name", msg.has("name") ? msg.get("name").getAsString() : "Helper");
+                            meta.addProperty("platform", msg.has("platform") ? msg.get("platform").getAsString() : "");
+                            if (msg.has("capabilities")) meta.add("capabilities", msg.get("capabilities"));
+                            meta.addProperty("lastSeen", System.currentTimeMillis());
+                            meta.addProperty("kind", "helper");
+                            helperMeta.put(ctx.sessionId(), meta);
+                            break;
+                        }
+                        case "action_result": {
+                            // Helper reports back: status of a remote action it executed.
+                            String action = msg.has("action") ? msg.get("action").getAsString() : "?";
+                            boolean ok = msg.has("success") && msg.get("success").getAsBoolean();
+                            System.out.println("[Helper] " + action + " → " + (ok ? "ok" : "fail"));
+                            break;
+                        }
+                        default:
+                            System.out.println("[Helper] message: " + ctx.message());
+                    }
+                } catch (Exception e) {
+                    System.err.println("[Helper] message parse error: " + e.getMessage());
+                }
+            });
+        });
+    }
+
+    /**
+     * Find a connected browser device's WS session id by display name (case-insensitive).
+     * Returns null when no browser device with that name is currently connected.
+     */
+    private String lookupDeviceSession(String name) {
+        if (name == null) return null;
+        String want = name.trim();
+        if (want.isEmpty()) return null;
+        for (java.util.Map.Entry<String, JsonObject> e : deviceMeta.entrySet()) {
+            JsonObject m = e.getValue();
+            String n = m != null && m.has("name") ? m.get("name").getAsString() : "";
+            if (want.equalsIgnoreCase(n)) return e.getKey();
+        }
+        return null;
+    }
+
+    /**
+     * Find a connected native helper's WS session id by display name (case-insensitive).
+     * Returns null when no helper with that name is currently connected.
+     */
+    private String lookupHelperSession(String name) {
+        if (name == null) return null;
+        String want = name.trim();
+        if (want.isEmpty()) return null;
+        for (java.util.Map.Entry<String, JsonObject> e : helperMeta.entrySet()) {
+            JsonObject m = e.getValue();
+            String n = m != null && m.has("name") ? m.get("name").getAsString() : "";
+            if (want.equalsIgnoreCase(n)) return e.getKey();
+        }
+        return null;
+    }
+
+    /** Send a message to a single browser WS session. */
+    private void forwardToSession(String sessionId, JsonObject msg) {
+        sendToSession(sessionId, msg);
+    }
+
+    /** Send a message to a single native helper WS session. */
+    private void forwardToHelper(String sessionId, JsonObject msg) {
+        WsContext ctx = helperClients.get(sessionId);
+        if (ctx == null) return;
+        try { ctx.send(msg.toString()); } catch (Exception ignored) {}
     }
 
     private void sendToSession(String sessionId, JsonObject msg) {
@@ -584,6 +731,135 @@ public class WebServer {
                     cmdMsg.addProperty("action", "REMOVE_COMMITMENT");
                     cmdMsg.addProperty("param", commitText);
                     broadcast(cmdMsg);
+                    continue;
+                }
+
+                // VIEW_DEVICE — capture a screenshot from a named device, feed it into the
+                // vision model in a follow-up turn. Frees the user from dragging an image in.
+                if ("VIEW_DEVICE".equals(cmd[0]) && cmd[1] != null) {
+                    String targetName = cmd[1].trim();
+                    String targetSessionId = lookupDeviceSession(targetName);
+                    if (targetSessionId == null) {
+                        JsonObject warn = new JsonObject();
+                        warn.addProperty("type", "system");
+                        warn.addProperty("text", "Device '" + targetName + "' is not connected.");
+                        broadcast(warn);
+                        continue;
+                    }
+                    String requestId = java.util.UUID.randomUUID().toString();
+                    JsonObject captureMsg = new JsonObject();
+                    captureMsg.addProperty("type", "capture_screen");
+                    captureMsg.addProperty("requestId", requestId);
+                    // Empty requesterSessionId tells the device we're not expecting a relay
+                    // back to a particular browser — we're consuming the frame server-side.
+                    captureMsg.addProperty("requesterSessionId", "");
+
+                    java.util.concurrent.CompletableFuture<String> frameFuture =
+                            new java.util.concurrent.CompletableFuture<>();
+                    pendingScreenCaptures.put(requestId, frameFuture);
+                    sendToSession(targetSessionId, captureMsg);
+
+                    final String capturedText = text;
+                    final boolean capturedPlay = playOnServer;
+                    final String capturedEngine = engine;
+                    frameFuture.orTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                            .thenAccept(jpegBase64 -> {
+                                String visionPrompt = "The user asked: \"" + capturedText
+                                        + "\". Describe what you see on the screen of " + targetName + ".";
+                                handleChat(visionPrompt, capturedPlay, "THINK", jpegBase64,
+                                        "screen.jpg", "image/jpeg", capturedEngine);
+                            })
+                            .exceptionally(ex -> {
+                                pendingScreenCaptures.remove(requestId);
+                                JsonObject msg = new JsonObject();
+                                msg.addProperty("type", "system");
+                                msg.addProperty("text",
+                                        "Screen capture from '" + targetName + "' "
+                                                + (ex instanceof java.util.concurrent.CancellationException
+                                                        ? "was declined."
+                                                        : "timed out."));
+                                broadcast(msg);
+                                return null;
+                            });
+                    continue;
+                }
+
+                // REMOTE_OPEN:DeviceName|https://url — tell a connected device to open a URL.
+                if ("REMOTE_OPEN".equals(cmd[0]) && cmd[1] != null) {
+                    String[] parts = cmd[1].split("\\|", 2);
+                    if (parts.length == 2) {
+                        String targetDevice = parts[0].trim();
+                        String url = parts[1].trim();
+                        String targetId = lookupDeviceSession(targetDevice);
+                        if (targetId == null) {
+                            JsonObject warn = new JsonObject();
+                            warn.addProperty("type", "system");
+                            warn.addProperty("text", "Device '" + targetDevice + "' is not connected.");
+                            broadcast(warn);
+                            continue;
+                        }
+                        JsonObject m = new JsonObject();
+                        m.addProperty("type", "remote_action");
+                        m.addProperty("action", "OPEN_URL");
+                        m.addProperty("url", url);
+                        m.addProperty("fromDevice", "master");
+                        forwardToSession(targetId, m);
+                    }
+                    continue;
+                }
+
+                // OS-level remote actions executed by the native helper on the target device.
+                if (java.util.Arrays.asList("TYPE_TEXT", "LAUNCH_APP", "KEY_COMBO", "CLICK_AT")
+                        .contains(cmd[0]) && cmd[1] != null) {
+                    String[] parts = cmd[1].split("\\|", 2);
+                    if (parts.length == 2) {
+                        String targetDevice = parts[0].trim();
+                        String payload = parts[1].trim();
+                        String targetId = lookupHelperSession(targetDevice);
+                        if (targetId == null) {
+                            JsonObject warn = new JsonObject();
+                            warn.addProperty("type", "system");
+                            warn.addProperty("text", "Native helper for '" + targetDevice
+                                    + "' is not connected.");
+                            broadcast(warn);
+                            continue;
+                        }
+                        JsonObject m = new JsonObject();
+                        m.addProperty("type", "remote_action");
+                        m.addProperty("action", cmd[0]);
+                        m.addProperty("fromDevice", "master");
+                        switch (cmd[0]) {
+                            case "TYPE_TEXT":
+                                m.addProperty("text", payload);
+                                break;
+                            case "LAUNCH_APP":
+                                m.addProperty("bundleId", payload);
+                                break;
+                            case "KEY_COMBO": {
+                                com.google.gson.JsonArray keys = new com.google.gson.JsonArray();
+                                for (String k : payload.split("\\+")) {
+                                    String t = k.trim();
+                                    if (!t.isEmpty()) keys.add(t);
+                                }
+                                m.add("keys", keys);
+                                break;
+                            }
+                            case "CLICK_AT": {
+                                String[] xy = payload.split(",", 2);
+                                if (xy.length == 2) {
+                                    try {
+                                        m.addProperty("x", Double.parseDouble(xy[0].trim()));
+                                        m.addProperty("y", Double.parseDouble(xy[1].trim()));
+                                    } catch (NumberFormatException nfe) {
+                                        System.err.println("[WebServer] CLICK_AT payload not numeric: " + payload);
+                                        continue;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        forwardToHelper(targetId, m);
+                    }
                     continue;
                 }
 

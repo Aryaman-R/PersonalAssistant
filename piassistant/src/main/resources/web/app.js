@@ -267,6 +267,8 @@ let currentImageBase64 = null;
 let currentFileName = null;
 let currentFileType = null;
 const tabSessionId = Date.now().toString() + Math.random().toString();
+// Active WebRTC peer connections, keyed by the other peer's sessionId.
+const webrtcPeerConnections = {};
 
 // ── Master-server URL (for remote clients) ────────────
 // If the user pinned a master device address in Settings, route every
@@ -379,9 +381,13 @@ function renderDeviceList() {
             <span class="device-name">${escapeHtml(d.name || 'Device')}</span>
             <span class="device-meta">${escapeHtml(d.platform || '')}</span>
             <button class="timer-btn play-btn device-snap-btn" data-session="${escapeHtml(d.sessionId)}">VIEW SCREEN</button>
+            <button class="timer-btn device-live-btn" data-session="${escapeHtml(d.sessionId)}" data-name="${escapeHtml(d.name || 'Device')}">LIVE</button>
         </div>`).join('');
     el.querySelectorAll('.device-snap-btn').forEach(b => {
         b.addEventListener('click', () => requestScreenSnapshot(b.dataset.session));
+    });
+    el.querySelectorAll('.device-live-btn').forEach(b => {
+        b.addEventListener('click', () => startWebRTCStream(b.dataset.session, b.dataset.name));
     });
 }
 async function requestScreenSnapshot(targetSessionId) {
@@ -432,6 +438,273 @@ function showSnapshot(dataUrl, deviceName) {
         w.document.write(`<title>${escapeHtml(deviceName || 'remote screen')}</title>
             <body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh">
             <img src="${dataUrl}" style="max-width:100%;max-height:100%"></body>`);
+    }
+}
+
+// ── Per-action consent store (Track 5) ────────────────
+// Records "always allow <action> from <fromDevice>" choices in localStorage
+// so the receiving user is only prompted on the first occurrence of a new
+// (sender, action) pair. The Settings → Permissions section lists every grant
+// so it can be revoked.
+function consentKey(action, fromDevice) {
+    return `sentient_consent_${action}_${(fromDevice || 'master').toLowerCase()}`;
+}
+function hasConsent(action, fromDevice) {
+    return localStorage.getItem(consentKey(action, fromDevice)) === 'granted';
+}
+function grantConsent(action, fromDevice) {
+    localStorage.setItem(consentKey(action, fromDevice), 'granted');
+    if (typeof refreshConsentList === 'function') refreshConsentList();
+}
+function revokeConsent(action, fromDevice) {
+    localStorage.removeItem(consentKey(action, fromDevice));
+    if (typeof refreshConsentList === 'function') refreshConsentList();
+}
+function listConsentGrants() {
+    const out = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith('sentient_consent_')) continue;
+        if (localStorage.getItem(key) !== 'granted') continue;
+        // Key shape: sentient_consent_<ACTION>_<fromDevice-lowercased>
+        const rest = key.slice('sentient_consent_'.length);
+        const underscore = rest.indexOf('_');
+        if (underscore < 0) continue;
+        const action = rest.slice(0, underscore);
+        const fromDevice = rest.slice(underscore + 1);
+        out.push({ key, action, fromDevice });
+    }
+    return out.sort((a, b) => a.action.localeCompare(b.action) || a.fromDevice.localeCompare(b.fromDevice));
+}
+function showConsentPrompt(action, fromDevice, detail, onAllow, onDeny) {
+    const modal = document.createElement('div');
+    modal.className = 'consent-modal';
+    modal.innerHTML = `
+        <div class="consent-box">
+            <h3>Permission Request</h3>
+            <p><strong>${escapeHtml(fromDevice || 'master')}</strong> wants to: <em>${escapeHtml(action)}</em></p>
+            <p class="consent-detail">${escapeHtml(detail || '')}</p>
+            <label class="consent-remember">
+                <input type="checkbox" id="consentRemember">
+                Always allow ${escapeHtml(action)} from ${escapeHtml(fromDevice || 'master')}
+            </label>
+            <div class="consent-buttons">
+                <button id="consentAllow" class="timer-btn play-btn">ALLOW</button>
+                <button id="consentDeny" class="timer-btn cancel-btn">DENY</button>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+    const allowBtn = modal.querySelector('#consentAllow');
+    const denyBtn = modal.querySelector('#consentDeny');
+    allowBtn.addEventListener('click', () => {
+        const remember = modal.querySelector('#consentRemember').checked;
+        if (remember) grantConsent(action, fromDevice);
+        modal.remove();
+        try { onAllow && onAllow(); } catch (e) { console.error('[consent] onAllow error', e); }
+    });
+    denyBtn.addEventListener('click', () => {
+        modal.remove();
+        try { onDeny && onDeny(); } catch (e) { /* swallow */ }
+    });
+    // Esc cancels.
+    modal.addEventListener('keydown', e => { if (e.key === 'Escape') denyBtn.click(); });
+    allowBtn.focus();
+}
+
+// ── Remote action handling (Track 3) ──────────────────
+// A remote_action message asks this tab to do something on behalf of another
+// device (or the master/AI). OPEN_URL pops a tab, SWITCH_PANEL flips the UI.
+function handleRemoteAction(data) {
+    const action = data.action;
+    const fromDevice = data.fromDevice || data.requesterSessionId || 'master';
+    if (action === 'OPEN_URL' && data.url) {
+        const url = String(data.url);
+        const go = () => window.open(url, '_blank', 'noopener,noreferrer');
+        if (hasConsent('OPEN_URL', fromDevice)) {
+            go();
+        } else {
+            showConsentPrompt('OPEN_URL', fromDevice, url, go);
+        }
+        return;
+    }
+    if (action === 'SWITCH_PANEL' && data.panel) {
+        const panel = String(data.panel);
+        const go = () => { try { openPanel(panel); } catch (e) { console.warn('openPanel failed for', panel, e); } };
+        if (hasConsent('SWITCH_PANEL', fromDevice)) {
+            go();
+        } else {
+            showConsentPrompt('SWITCH_PANEL', fromDevice, 'Open the "' + panel + '" panel', go);
+        }
+        return;
+    }
+    console.log('[remote_action] ignoring unknown action', action, data);
+}
+
+// ── WebRTC live screen mirror (Track 2) ───────────────
+// Two-tab peer-to-peer video. The watcher (this device) calls startWebRTCStream;
+// the watched device responds in handleWebRTCOffer with getDisplayMedia + an
+// SDP answer. We rely on Tailnet for routing — no TURN servers needed.
+async function startWebRTCStream(targetSessionId, targetName) {
+    if (!navigator.mediaDevices || !window.RTCPeerConnection) {
+        alert('Live mirror requires a modern browser with WebRTC support.');
+        return;
+    }
+    const existing = webrtcPeerConnections[targetSessionId];
+    if (existing) { try { existing.close(); } catch (e) {} }
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    webrtcPeerConnections[targetSessionId] = pc;
+
+    // Pop a viewer window for the remote stream.
+    const w = window.open('', '_blank', 'width=960,height=600');
+    if (!w) {
+        alert('Pop-up blocked — allow pop-ups for this site to view the live stream.');
+        try { pc.close(); } catch (e) {}
+        delete webrtcPeerConnections[targetSessionId];
+        return;
+    }
+    w.document.title = (targetName || 'Live') + ' · live mirror';
+    w.document.body.style.cssText = 'margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh';
+    const video = w.document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video.style.cssText = 'width:100%;height:100%;background:#000;object-fit:contain';
+    w.document.body.appendChild(video);
+    w.addEventListener('beforeunload', () => {
+        try { pc.close(); } catch (e) {}
+        delete webrtcPeerConnections[targetSessionId];
+    });
+
+    pc.ontrack = (e) => { video.srcObject = e.streams[0]; };
+    pc.onicecandidate = (e) => {
+        if (!e.candidate) return;
+        sendWS({
+            type: 'ice_candidate',
+            targetSessionId,
+            candidate: e.candidate.toJSON(),
+            fromSessionId: tabSessionId
+        });
+    };
+    pc.onconnectionstatechange = () => {
+        if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+            delete webrtcPeerConnections[targetSessionId];
+        }
+    };
+    // Watcher must declare it wants to receive a video track.
+    try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (e) { /* older browsers */ }
+
+    const offer = await pc.createOffer({ offerToReceiveVideo: true });
+    await pc.setLocalDescription(offer);
+    sendWS({
+        type: 'webrtc_offer',
+        targetSessionId,
+        sdp: offer.sdp,
+        fromSessionId: tabSessionId
+    });
+}
+
+async function handleWebRTCOffer(msg) {
+    const from = msg.fromSessionId;
+    if (!from) return;
+    // Receiver: prompt for screen-share consent the same way as the snapshot path.
+    const fromDeviceName = (knownDevices.find(d => d.sessionId === from) || {}).name || from;
+    const proceed = () => doWebRTCAnswer(msg, fromDeviceName);
+    if (hasConsent('LIVE_STREAM', fromDeviceName)) {
+        proceed();
+    } else {
+        showConsentPrompt(
+            'LIVE_STREAM',
+            fromDeviceName,
+            'Share your screen live with ' + fromDeviceName,
+            proceed,
+            () => {
+                // Tell the offerer we declined, so they can clean up their PC.
+                sendWS({
+                    type: 'webrtc_answer',
+                    targetSessionId: from,
+                    sdp: '',
+                    declined: true,
+                    fromSessionId: tabSessionId
+                });
+            }
+        );
+    }
+}
+
+async function doWebRTCAnswer(msg, fromDeviceName) {
+    const from = msg.fromSessionId;
+    let stream;
+    try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    } catch (e) {
+        console.warn('[webrtc] getDisplayMedia denied', e);
+        sendWS({
+            type: 'webrtc_answer',
+            targetSessionId: from,
+            sdp: '',
+            declined: true,
+            fromSessionId: tabSessionId
+        });
+        return;
+    }
+    const existing = webrtcPeerConnections[from];
+    if (existing) { try { existing.close(); } catch (e) {} }
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    webrtcPeerConnections[from] = pc;
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    // When the user clicks the browser's "Stop sharing" button, kill the PC too.
+    stream.getVideoTracks().forEach(t => t.addEventListener('ended', () => {
+        try { pc.close(); } catch (e) {}
+        delete webrtcPeerConnections[from];
+    }));
+    pc.onicecandidate = (e) => {
+        if (!e.candidate) return;
+        sendWS({
+            type: 'ice_candidate',
+            targetSessionId: from,
+            candidate: e.candidate.toJSON(),
+            fromSessionId: tabSessionId
+        });
+    };
+    pc.onconnectionstatechange = () => {
+        if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+            delete webrtcPeerConnections[from];
+        }
+    };
+    await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    sendWS({
+        type: 'webrtc_answer',
+        targetSessionId: from,
+        sdp: answer.sdp,
+        fromSessionId: tabSessionId
+    });
+}
+
+async function handleWebRTCAnswer(msg) {
+    const pc = webrtcPeerConnections[msg.fromSessionId];
+    if (!pc) return;
+    if (msg.declined || !msg.sdp) {
+        try { pc.close(); } catch (e) {}
+        delete webrtcPeerConnections[msg.fromSessionId];
+        appendChat('system', 'System', 'The other device declined the live stream.');
+        return;
+    }
+    try {
+        await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+    } catch (e) {
+        console.error('[webrtc] setRemoteDescription failed', e);
+    }
+}
+
+async function handleICECandidate(msg) {
+    const pc = webrtcPeerConnections[msg.fromSessionId];
+    if (!pc || !msg.candidate) return;
+    try {
+        await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+    } catch (e) {
+        console.warn('[webrtc] addIceCandidate failed', e);
     }
 }
 
@@ -495,6 +768,18 @@ function handleWSMessage(msg) {
             break;
         case 'autofill_request':
             if (typeof showAutofillOverlay === 'function') showAutofillOverlay(msg);
+            break;
+        case 'remote_action':
+            handleRemoteAction(msg);
+            break;
+        case 'webrtc_offer':
+            handleWebRTCOffer(msg);
+            break;
+        case 'webrtc_answer':
+            handleWebRTCAnswer(msg);
+            break;
+        case 'ice_candidate':
+            handleICECandidate(msg);
             break;
     }
 }
@@ -1003,10 +1288,10 @@ async function checkGoogleTasksStatus() {
 
 if (tasksGoogleConnectBtn) {
     tasksGoogleConnectBtn.addEventListener('click', () => {
-        window.open('/api/tasks/google/auth', '_blank', 'width=500,height=700');
+        window.open(api('/api/tasks/google/auth'), '_blank', 'width=500,height=700');
         const poll = setInterval(async () => {
             try {
-                const res = await fetch('/api/tasks/google/status');
+                const res = await fetch(api('/api/tasks/google/status'));
                 const data = await res.json();
                 if (data.authenticated) {
                     clearInterval(poll);
@@ -1394,11 +1679,11 @@ function showSpotifyMain() {
 
 // Connect button
 document.getElementById('spotifyConnectBtn').addEventListener('click', () => {
-    window.open('/api/spotify/auth', '_blank', 'width=500,height=700');
+    window.open(api('/api/spotify/auth'), '_blank', 'width=500,height=700');
     // Poll for successful auth
     const authPoll = setInterval(async () => {
         try {
-            const res = await fetch('/api/spotify/status');
+            const res = await fetch(api('/api/spotify/status'));
             const data = JSON.parse(await res.text());
             if (data.authenticated) {
                 clearInterval(authPoll);
@@ -2118,10 +2403,12 @@ async function checkCalendarStatus() {
 
 if (calendarAuthBtn) {
     calendarAuthBtn.addEventListener('click', () => {
-        window.open('/api/tasks/google/auth', '_blank');
+        // Tasks and Calendar share a single OAuth token file + auth endpoint;
+        // use api(...) so it works when sentient_masterHost points elsewhere.
+        window.open(api('/api/tasks/google/auth'), '_blank', 'width=500,height=700');
         const pollInterval = setInterval(async () => {
             try {
-                await fetch('/api/calendar/refresh-auth', { method: 'POST' });
+                await fetch(api('/api/calendar/refresh-auth'), { method: 'POST' });
                 if (await checkCalendarStatus()) {
                     clearInterval(pollInterval);
                     loadCalendarEvents();
@@ -3059,7 +3346,31 @@ async function deleteEnvVar(name) {
 }
 if (vaultCredSaveBtn) vaultCredSaveBtn.addEventListener('click', saveCredentialFromForm);
 if (vaultEnvSaveBtn) vaultEnvSaveBtn.addEventListener('click', saveEnvVarFromForm);
-setTimeout(() => { refreshVaultCredentials(); refreshVaultEnvVars(); }, 1500);
+setTimeout(() => { refreshVaultCredentials(); refreshVaultEnvVars(); refreshConsentList(); }, 1500);
+
+// ── Permissions panel renderer (Settings → PERMISSIONS) ──
+function refreshConsentList() {
+    const el = document.getElementById('permissionsList');
+    if (!el) return;
+    const grants = listConsentGrants();
+    if (!grants.length) {
+        el.innerHTML = '<div class="permissions-empty">No permissions granted yet — you\'ll see entries here as you accept incoming remote actions.</div>';
+        return;
+    }
+    el.innerHTML = grants.map(g => `
+        <div class="permission-row">
+            <span class="permission-action">${escapeHtml(g.action)}</span>
+            <span class="permission-from">from <strong>${escapeHtml(g.fromDevice)}</strong></span>
+            <button class="timer-btn cancel-btn permission-revoke-btn"
+                    data-action="${escapeHtml(g.action)}"
+                    data-from="${escapeHtml(g.fromDevice)}">REVOKE</button>
+        </div>`).join('');
+    el.querySelectorAll('.permission-revoke-btn').forEach(b => {
+        b.addEventListener('click', () => {
+            revokeConsent(b.dataset.action, b.dataset.from);
+        });
+    });
+}
 
 // Auto-fill overlay shown when an autofill_request lands on this tab.
 function showAutofillOverlay(payload) {

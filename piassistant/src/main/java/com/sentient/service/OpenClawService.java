@@ -344,6 +344,13 @@ public class OpenClawService {
                         ? ""
                         : ("Env vars on master (names only): "
                                 + String.join(", ", CredentialVault.current().envVarNames()) + ".\n")) +
+                "— Devices / remote control (only when the user explicitly names a device):\n" +
+                "- [CMD:VIEW_DEVICE:DeviceName] — capture a screenshot from a connected device and analyze it visually.\n" +
+                "- [CMD:REMOTE_OPEN:DeviceName|https://url] — open a URL in the browser tab on the named device.\n" +
+                "- [CMD:TYPE_TEXT:DeviceName|text to type] — type text into the focused app on the named device (helper only).\n" +
+                "- [CMD:LAUNCH_APP:DeviceName|com.example.bundle] — launch a macOS app by bundle id (helper only).\n" +
+                "- [CMD:KEY_COMBO:DeviceName|cmd+space] — send a key combination on the named device (helper only).\n" +
+                "- [CMD:CLICK_AT:DeviceName|x,y] — click at screen coordinates on the named device (helper only).\n" +
                 "- [CMD:CONTINUE_CONVERSATION] — include when the user likely wants to keep talking\n" +
                 "\nCurrent tasks: " + taskSummary + ".\n" +
                 "Current commitments: " + String.join(", ", p.commitments) + ".\n" +

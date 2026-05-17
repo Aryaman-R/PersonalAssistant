@@ -2688,6 +2688,54 @@ body {
 }
 .device-name { color: var(--accent-blue); font-weight: 600; }
 .device-meta { color: var(--text-muted); font-size: 12px; flex: 1; }
+.device-live-btn { background: var(--bg-hover); color: var(--accent-green); }
+.device-live-btn:hover { background: var(--accent-green); color: var(--bg-base); }
+
+/* ── Permissions list (Settings → PERMISSIONS) ────────── */
+.permissions-list {
+    display: flex; flex-direction: column; gap: 6px; margin-top: 10px;
+}
+.permission-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 10px; background: var(--bg-item);
+    border: 1px solid var(--border-dark); border-radius: 6px;
+}
+.permission-action { color: var(--accent-green); font-weight: 700; letter-spacing: 0.08em; min-width: 110px; }
+.permission-from { color: var(--text-secondary); font-size: 12px; flex: 1; }
+.permission-row .timer-btn { padding: 4px 12px; font-size: 11px; }
+.permissions-empty { color: var(--text-muted); font-size: 12px; font-style: italic; padding: 6px 0; }
+
+/* ── Consent modal (incoming remote_action prompts) ───── */
+.consent-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100000;
+}
+.consent-box {
+    background: var(--bg-panel); border: 1px solid var(--border-light);
+    border-radius: 12px; padding: 24px; max-width: 460px; width: 90%;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+    font-family: var(--font-mono);
+}
+.consent-box h3 {
+    margin: 0 0 12px; color: var(--accent-green);
+    letter-spacing: 0.12em; font-size: 14px;
+}
+.consent-box p { color: var(--text-primary); margin: 6px 0; font-size: 13px; line-height: 1.5; }
+.consent-box em { color: var(--accent-blue); font-style: normal; font-weight: 600; }
+.consent-detail {
+    font-size: 12px !important; color: var(--text-secondary) !important;
+    word-break: break-all; background: var(--bg-input);
+    padding: 8px 10px; border-radius: 6px; margin-top: 10px !important;
+}
+.consent-remember {
+    display: flex; align-items: center; gap: 8px;
+    margin: 16px 0 4px; color: var(--text-secondary); font-size: 12px;
+    cursor: pointer;
+}
+.consent-remember input { accent-color: var(--accent-green); }
+.consent-buttons { display: flex; gap: 12px; margin-top: 18px; }
+.consent-buttons .timer-btn { flex: 1; padding: 10px; font-size: 12px; }
 
 /* ── Autofill overlay ────────────────────────────────── */
 .autofill-overlay {

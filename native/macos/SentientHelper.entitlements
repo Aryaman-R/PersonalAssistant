@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Allow scripting other apps via Apple Events (used for app launching and
+         certain key-combo scenarios). The user still has to approve this once
+         per target app via the standard TCC prompt. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <!-- Allow outbound network connections to the Sentient master.
+         The helper is a sandboxed daemon, not a network server. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

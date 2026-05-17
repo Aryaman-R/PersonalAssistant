@@ -188,6 +188,13 @@ public class GroqService {
                                 ? ""
                                 : ("Available env-var names (values stay on the master, never disclose them): "
                                         + String.join(", ", CredentialVault.current().envVarNames()) + ".\n")) +
+                        "— Devices / remote control (only use when the user explicitly asks to act on a specific device):\n" +
+                        "- [CMD:VIEW_DEVICE:DeviceName] — capture a screenshot from a connected device and analyze it visually. Use the names visible in the device registry.\n" +
+                        "- [CMD:REMOTE_OPEN:DeviceName|https://url] — open a URL in the browser tab on the named device.\n" +
+                        "- [CMD:TYPE_TEXT:DeviceName|text to type] — type text into the focused app on the named device (requires the native helper).\n" +
+                        "- [CMD:LAUNCH_APP:DeviceName|com.example.bundle] — launch a macOS app by bundle id (helper only).\n" +
+                        "- [CMD:KEY_COMBO:DeviceName|cmd+space] — send a key combination on the named device (helper only).\n" +
+                        "- [CMD:CLICK_AT:DeviceName|x,y] — click at screen coordinates on the named device (helper only).\n" +
                         "— Conversation:\n" +
                         "- [CMD:CONTINUE_CONVERSATION] — Include this when you believe the user wants to keep talking "
                         +
