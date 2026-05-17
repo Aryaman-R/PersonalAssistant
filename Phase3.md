@@ -616,3 +616,163 @@ Build in this sequence to ship incremental value with no regressions:
 | `styles.css` | 5 | Add `.consent-modal` + `.consent-box` styles |
 | `native/macos/` | 4 | New Swift PM project — `SentientHelper` CLI |
 | `.gitignore` | 6 | Add `user_profile.json` |
+
+---
+
+## What Shipped (commit `cb95cdf`)
+
+All six tracks are implemented and on `origin/main`. The Maven build is clean
+(`mvn -DskipTests package` → `BUILD SUCCESS`); `app.js` passes `node --check`.
+
+### Files touched
+
+```
+piassistant/src/main/java/com/sentient/WebServer.java               +275/-13
+piassistant/src/main/java/com/sentient/service/GroqService.java       +7
+piassistant/src/main/java/com/sentient/service/OpenClawService.java   +7
+piassistant/src/main/resources/web/app.js                            +316
+piassistant/src/main/resources/web/index.html                        +10
+piassistant/src/main/resources/web/styles.css                        +48
+native/macos/Package.swift                                            (new)
+native/macos/Sources/SentientHelper/main.swift                        (new)
+native/macos/SentientHelper.entitlements                              (new)
+native/macos/README.md                                                (new)
+native/macos/.gitignore                                               (new)
+```
+
+### Track-by-track outcome
+
+| Track | Status | Notes |
+|---|---|---|
+| 1 — `VIEW_DEVICE` → vision | ✅ | Round-trip via `pendingScreenCaptures` + 30 s timeout, recurses into `handleChat` with the JPEG. |
+| 2 — WebRTC live mirror | ✅ | `webrtc_offer/answer/ice_candidate` relay on server; `startWebRTCStream` / `handleWebRTCOffer` / answer / ICE on client; new `LIVE` button next to `VIEW SCREEN`. Consent-gated under `LIVE_STREAM`. |
+| 3 — Browser-safe `remote_action` | ✅ | `OPEN_URL` and `SWITCH_PANEL` handlers; both gated by per-action consent. Server also relays `text`, `bundleId`, `keys`, `x`, `y`, and `fromDevice` to helpers. |
+| 4 — Native macOS helper | ✅ | Swift PM project, `URLSessionWebSocketTask` client with reconnect, `CGEvent` typing/clicking/key combos, `NSWorkspace` launching, Accessibility-permission check at boot. Separate `/helper` WS so helpers don't pollute browser broadcasts. |
+| 5 — Per-action consent | ✅ | `localStorage`-backed store, modal prompt, Settings → PERMISSIONS panel listing every grant with REVOKE buttons. |
+| 6 — Bug fixes | ✅ | Calendar / Tasks / Spotify `window.open` URLs go through `api(...)` so they respect `sentient_masterHost`. `.gitignore` already excluded `user_profile.json`; no duplicate file present in the working tree. |
+
+### Slight deviations from the blueprint
+
+- Phase 3 doc called the receiver-side switch helper `showPanel(...)`; the
+  function is named `openPanel(...)` in the codebase — I used the existing
+  name. Same behavior.
+- `screen_frame` already carried the captured frame in a field named `frame`
+  (not `imageData` as the doc draft suggested). The Track 1 future resolution
+  reads `frame` to match what the device actually sends.
+- The doc's example `iceServers: []` is kept verbatim — works on Tailnet but
+  will need a STUN entry if anyone ever runs this outside the tailnet.
+- `KEY_COMBO` accepts `+`-separated key names on the wire (e.g.
+  `cmd+space`). The helper splits and maps each token to either a CGEventFlag
+  (`cmd`, `shift`, `alt`/`option`, `ctrl`, `fn`) or a virtual key code.
+
+---
+
+## How to test / see each feature
+
+Everything below assumes:
+- The master is running locally: `cd piassistant && mvn -DskipTests package && java -jar target/sentient-assistant-1.0-SNAPSHOT.jar` (or however you normally launch it).
+- The web UI is open at `http://localhost:7070`.
+- You're logged in and the WS shows `ONLINE`.
+
+### 0. Smoke test — just confirm nothing regressed
+
+1. Open the app, send a chat: "what time is it?". You should get a streamed reply.
+2. Open Settings — confirm the new `PERMISSIONS` section appears under
+   `DEVICES`. It should show the "No permissions granted yet…" hint.
+3. Open the Spotify panel and click `RECONNECT SPOTIFY`. The OAuth window
+   should open against whichever host `sentient_masterHost` points at (not
+   hardcoded to `localhost`). Same check applies to Tasks/Calendar buttons.
+
+### 1. `VIEW_DEVICE` — AI asks a device for its screen
+
+1. Open the app in **two browser tabs** (or two devices on the same tailnet).
+2. In Settings → DEVICES on each tab, set distinct device names (e.g. `Laptop`
+   and `Phone`) and `SAVE NAME`. Both should appear in each tab's device list.
+3. In the chat, ask: **"What's on my Laptop?"** (use the name you saved).
+4. On the named device's tab, the browser will pop a screen-share consent
+   dialog. Pick a window or screen and click "Share".
+5. The frame round-trips to the server (you'll see no UI on the requester
+   yet) and is fed straight into the vision model. The assistant streams back
+   a description of what was on the captured screen.
+6. Failure modes worth checking:
+   - Decline the screen-share prompt → expect "Screen capture from 'Laptop'
+     was declined." in chat.
+   - Don't respond at all for 30 s → expect "...timed out."
+   - Use a name that doesn't match any connected device → expect
+     "Device 'Laptop' is not connected."
+
+### 2. WebRTC live mirror
+
+1. Same two-tab / two-device setup.
+2. In tab A's Settings → DEVICES, click `LIVE` next to tab B's row.
+3. Tab B should pop a consent modal: **"Share your screen live with …"**.
+   Click `ALLOW`. (Optional: tick "Always allow…" to skip future prompts.)
+4. The browser's screen-share picker appears on tab B. Choose a window/screen
+   and click Share.
+5. A new viewer window opens on tab A with the live video — should be
+   sub-100 ms on a local tailnet.
+6. Stop the stream by clicking macOS/Chrome's native "Stop sharing" pill OR
+   by closing the viewer window — both should clean up the peer connection
+   (no zombie connections in `webrtcPeerConnections`).
+7. Re-test denying the consent → the offerer should see
+   "The other device declined the live stream." in chat.
+
+### 3. AI-driven remote actions (`REMOTE_OPEN`)
+
+1. Two devices/tabs registered as `Laptop` and `Phone`.
+2. From either tab's chat, type: **"Open anthropic.com on my Phone."**
+3. On the `Phone` tab, a consent modal appears: *"master wants to: OPEN_URL.
+   https://anthropic.com"*. Click `ALLOW` — the URL opens in a new tab.
+4. Tick "Always allow" on the next request; subsequent
+   "Open <url> on Phone" requests should pop the URL without prompting.
+5. Revoke from Settings → PERMISSIONS → REVOKE; next request should prompt
+   again.
+
+### 4. Per-action consent store
+
+1. Anywhere a remote action lands (Track 2/3 above), the modal offers
+   "Always allow `<action>` from `<device>`".
+2. After accepting once with the box ticked, the same (sender, action) pair
+   becomes silent until you revoke.
+3. Go to Settings → PERMISSIONS. Every stored grant appears with a `REVOKE`
+   button; click it and the entry disappears. The localStorage key is
+   `sentient_consent_<ACTION>_<from-device-lowercased>`.
+
+### 5. Native macOS helper
+
+You need a Mac with Xcode command-line tools (`swift --version`).
+
+```bash
+cd native/macos
+swift build -c release
+sudo cp .build/release/SentientHelper /usr/local/bin/sentient-helper
+
+# Token = the one your master issued after login. Easiest way:
+#   open the web UI's devtools → application → localStorage → sentient_token
+SENTIENT_TOKEN=<your-token> sentient-helper \
+    --host localhost:7070 \
+    --name "My Mac"
+```
+
+First run will print a warning until you tick **System Settings → Privacy &
+Security → Accessibility** for `sentient-helper`. After that:
+
+1. In the master's chat: **"On My Mac, launch the bundle id `com.apple.Safari`."**
+   Safari opens. (Backed by `[CMD:LAUNCH_APP:My Mac|com.apple.Safari]`.)
+2. **"Type `Hello there` on My Mac."** → text appears in the focused app.
+   (`[CMD:TYPE_TEXT:My Mac|Hello there]`)
+3. **"Open Spotlight on My Mac."** → expect a `KEY_COMBO` with `cmd+space`.
+4. **"Click 800, 600 on My Mac."** → mouse jumps and left-clicks.
+5. Sever the master and observe the helper auto-reconnect with exponential
+   backoff (1 s → 2 s → 4 s up to 30 s).
+6. Inspect `[Helper] <ACTION> [...] → ok|fail` in the helper's stdout and
+   `[Helper] <ACTION> → ok|fail` on the master's stdout for each round-trip.
+
+### 6. Confirm Track 6 fixes
+
+- In Settings, set `Master Server URL` to a *different* host on your tailnet
+  (e.g. `100.x.y.z:7070`) and reload. Click `CONNECT GOOGLE CALENDAR`,
+  `CONNECT GOOGLE TASKS`, and Spotify's `RECONNECT` — each should open the
+  OAuth window against the *remote* host, not `localhost`.
+- `git ls-files | grep user_profile.json` should be empty (it's git-ignored).
+
