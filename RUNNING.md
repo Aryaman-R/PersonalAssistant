@@ -301,6 +301,21 @@ launchctl load -w ~/Library/LaunchAgents/com.sentient.helper.plist
 
 Full helper protocol + flags in [`native/macos/README.md`](native/macos/README.md).
 
+### 9b. Native Windows helper (optional)
+
+Same idea on Windows — a .NET 8 console app that speaks the same `/helper`
+protocol. No Accessibility prompt; the only friction is the SmartScreen
+warning on first run of the unsigned EXE.
+
+```powershell
+cd native\windows\SentientHelper
+dotnet publish -c Release
+# → bin\Release\net8.0-windows\win-x64\publish\sentient-helper.exe
+```
+
+Run at login via Task Scheduler — full recipe (incl. UAC / AUMID notes) in
+[`native/windows/README.md`](native/windows/README.md).
+
 ---
 
 ## 10. Daily commands
@@ -374,4 +389,5 @@ journalctl -u sentient.service -f
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — module map, WS contract, REST surface.
 - [`CAPABILITIES.md`](CAPABILITIES.md) — feature surface area (every command tag the AI knows).
 - [`DEVICE_CONTROL.md`](DEVICE_CONTROL.md) — original cross-device control design notes.
-- [`native/macos/README.md`](native/macos/README.md) — helper internals + LaunchAgent.
+- [`native/macos/README.md`](native/macos/README.md) — macOS helper internals + LaunchAgent.
+- [`native/windows/README.md`](native/windows/README.md) — Windows helper internals + Task Scheduler.

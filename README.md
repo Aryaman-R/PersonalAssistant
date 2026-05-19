@@ -140,6 +140,10 @@ piassistant/
 │  └─ styles.css                ── dark monospace theme
 ├─ pom.xml                      ── Maven build (shade plugin → fat jar)
 
+native/
+├─ macos/                       ── Swift PM helper for OS-level remote control on Macs
+└─ windows/                     ── .NET 8 helper for OS-level remote control on Windows PCs
+
 ARCHITECTURE.md                 ── deeper-dive architecture notes + known issues
 reference.md                    ── Claude's working notes for this codebase
 README.md                       ── this file

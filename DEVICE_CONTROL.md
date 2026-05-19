@@ -108,8 +108,8 @@ Browser tab (Sentient UI)
         │  WS or local socket
         ▼
    "Sentient Agent" native helper (per OS)
-        ├── macOS:    Swift CLI using Accessibility / CGEventPost / NSWorkspace
-        ├── Windows:  C# helper using SendInput / Start-Process
+        ├── macOS:    Swift CLI using Accessibility / CGEventPost / NSWorkspace   (shipped → native/macos)
+        ├── Windows:  C# / .NET 8 using SendInput / ShellExecute                  (shipped → native/windows)
         ├── Linux/X:  xdotool / wmctrl
         ├── Linux/Wayland: wtype / ydotool
         └── Android:  ADB shell over USB, or a Tasker-bridge app
@@ -154,10 +154,11 @@ Order of operations if you want to finish this:
 3. **Browser-safe `remote_action` actions**: Implement `OPEN_URL` and basic
    panel switching first — those work today without any native helper.
 
-4. **Native helper for OS control**: This is the big one. Recommended path:
-   start with macOS (Swift CLI signed for Accessibility permission) since most
-   "open Claude" / "search this" cases live there. Reuse the WS protocol.
-   Defer Windows / Linux / mobile until macOS proves the UX.
+4. **Native helper for OS control**: This is the big one. macOS (Swift CLI
+   gated on Accessibility permission) and Windows (.NET 8 console app using
+   `SendInput` / `ShellExecute`, no permission prompt) both ship today —
+   see `native/macos/` and `native/windows/`. Both speak the same wire
+   protocol over `/helper`. Linux (X11 / Wayland) and mobile are still TBD.
 
 5. **Consent model**: Build a per-action consent screen on the controlled
    device. Even with a native helper, every novel action category should
@@ -175,7 +176,7 @@ Order of operations if you want to finish this:
 | Drag that snapshot into the chat, ask "what is this?" | ✅ (uses existing vision flow) |
 | Continuous live mirror (multi-second video stream) | ❌ — needs WebRTC |
 | "Jarvis, what's on my Mac right now?" — automatic | ❌ — needs the §3.1 command wiring |
-| "Open Claude on my Mac" / "type X into the focused app" | ❌ — needs §3.4 native helper |
+| "Open Claude on my Mac" / "type X into the focused app" | ✅ on macOS + Windows with the helper installed (`native/macos/`, `native/windows/`) |
 
 ## 5. Security posture
 
