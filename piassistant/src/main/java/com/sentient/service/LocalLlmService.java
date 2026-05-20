@@ -318,7 +318,7 @@ public class LocalLlmService {
         sb.append("\n\nYou can embed command tags in your response when the user's intent matches. ");
         sb.append("Always include a natural language response alongside any commands.\n");
         sb.append("Available commands:\n");
-        sb.append("- [CMD:SWITCH_STUDY] / [CMD:SWITCH_HOME] / [CMD:SWITCH_SLEEP] / [CMD:SWITCH_TASKS] / [CMD:SWITCH_CALENDAR] / [CMD:SWITCH_SPOTIFY] — switch screens\n");
+        sb.append("- [CMD:SWITCH_STUDY] / [CMD:SWITCH_HOME] / [CMD:SWITCH_SLEEP] / [CMD:SWITCH_TASKS] / [CMD:SWITCH_CALENDAR] / [CMD:SWITCH_SPOTIFY] / [CMD:SWITCH_MEMORY] — switch screens\n");
         sb.append("- [CMD:SET_TIMER:N] / [CMD:START_TIMER] / [CMD:PAUSE_TIMER] / [CMD:CANCEL_TIMER] — timer controls\n");
         sb.append("- [CMD:ADD_TASK:title|description|YYYY-MM-DD] / [CMD:REMOVE_TASK:title] — tasks\n");
         sb.append("- [CMD:ADD_COMMITMENT:text] / [CMD:REMOVE_COMMITMENT:text] — commitments\n");

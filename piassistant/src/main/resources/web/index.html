@@ -54,6 +54,10 @@
             <span class="nav-icon">♫</span>
             <span class="nav-label">MUSIC</span>
         </button>
+        <button class="nav-btn" id="nav-memory" data-panel="memory">
+            <span class="nav-icon">◈</span>
+            <span class="nav-label">MEMORY</span>
+        </button>
         <button class="nav-btn" id="nav-settings" data-panel="settings">
             <span class="nav-icon">⚙</span>
             <span class="nav-label">SETTINGS</span>
@@ -394,6 +398,35 @@
                         <div class="np-progress-bar" id="npProgressBar"></div>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- MEMORY Panel -->
+        <section class="panel" id="panel-memory" style="display:none">
+            <div class="panel-header">
+                <div class="panel-accent memory-accent"></div>
+                <h2 class="panel-title">MEMORY</h2>
+                <button class="panel-close" data-panel="memory">✕</button>
+            </div>
+            <div class="memory-content">
+                <div class="memory-toolbar">
+                    <input type="text" class="form-input memory-search" id="memorySearch" placeholder="Search memories… (BM25 over content)" autocomplete="off">
+                    <span class="memory-count" id="memoryCount">0 entries</span>
+                    <button class="timer-btn play-btn" id="memoryAddBtn">+ ADD FACT</button>
+                    <button class="timer-btn cancel-btn" id="memoryPurgeBtn">PURGE ALL</button>
+                </div>
+                <div class="memory-add-row" id="memoryAddRow" style="display:none">
+                    <input type="text" class="form-input memory-add-input" id="memoryAddContent" placeholder="A fact you want the assistant to remember…">
+                    <button class="timer-btn play-btn" id="memoryAddConfirmBtn">SAVE</button>
+                    <button class="timer-btn cancel-btn" id="memoryAddCancelBtn">CANCEL</button>
+                </div>
+                <div class="memory-hint">
+                    Every chat turn is captured here automatically. Up to 5 of the most relevant
+                    past entries are injected into the LLM prompt on every reply — that's how
+                    Sentient stays consistent across conversations. Say "forget about X" to drop
+                    matching entries, or click ✕ next to any single row.
+                </div>
+                <div class="memory-list" id="memoryList"></div>
             </div>
         </section>
 

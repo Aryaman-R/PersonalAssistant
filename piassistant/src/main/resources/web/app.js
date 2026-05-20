@@ -70,6 +70,7 @@ function openPanel(name) {
     if (name === 'study') refreshStudyTasks();
     if (name === 'sleep') startSleepClock();
     if (name === 'spotify') initSpotifyPanel();
+    if (name === 'memory') { try { refreshMemory(); } catch (e) {} }
 }
 
 function closePanel(name) {
@@ -1024,6 +1025,17 @@ function executeCommand(action, param) {
         case 'SWITCH_TASKS':
             if (!activePanels.has('tasks')) openPanel('tasks');
             appendChat('system', 'System', '⚡ Switched to Tasks');
+            break;
+        case 'SWITCH_MEMORY':
+            if (!activePanels.has('memory')) openPanel('memory');
+            appendChat('system', 'System', '⚡ Switched to Memory');
+            setTimeout(() => { try { refreshMemory(); } catch (e) {} }, 100);
+            break;
+        case 'FORGET':
+            // Server has already dropped the matching entries; just refresh the list
+            // if the panel is open and surface the count in the chat log.
+            appendChat('system', 'System', `🧠 Forgot ${param ? param : 'matching'} memories.`);
+            if (activePanels.has('memory')) setTimeout(refreshMemory, 100);
             break;
         case 'SET_TIMER':
             if (param) {
@@ -3925,6 +3937,136 @@ loadComposioConfig();
 loadMasterServerConfig();
 refreshOpenClawStatus();
 refreshLocalLlmStatus();
+
+// ── MEMORY panel (episodic memory · STRETCH §6) ────────
+const memorySearch = document.getElementById('memorySearch');
+const memoryCount = document.getElementById('memoryCount');
+const memoryAddBtn = document.getElementById('memoryAddBtn');
+const memoryPurgeBtn = document.getElementById('memoryPurgeBtn');
+const memoryAddRow = document.getElementById('memoryAddRow');
+const memoryAddContent = document.getElementById('memoryAddContent');
+const memoryAddConfirmBtn = document.getElementById('memoryAddConfirmBtn');
+const memoryAddCancelBtn = document.getElementById('memoryAddCancelBtn');
+const memoryList = document.getElementById('memoryList');
+
+let memorySearchTimer = null;
+
+function memoryAge(ts) {
+    const d = Date.now() - ts;
+    const s = Math.floor(d / 1000);
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m / 60);
+    if (h < 48) return h + 'h ago';
+    const days = Math.floor(h / 24);
+    if (days < 30) return days + 'd ago';
+    const mo = Math.floor(days / 30);
+    if (mo < 12) return mo + 'mo ago';
+    return Math.floor(mo / 12) + 'y ago';
+}
+
+async function refreshMemory() {
+    if (!memoryList) return;
+    const q = memorySearch ? memorySearch.value.trim() : '';
+    const url = q
+        ? api('/api/memory?q=' + encodeURIComponent(q) + '&limit=200')
+        : api('/api/memory?limit=200');
+    try {
+        const r = await fetch(url);
+        if (!r.ok) {
+            memoryList.innerHTML = '<div class="memory-empty">Could not load memory (HTTP ' + r.status + ').</div>';
+            return;
+        }
+        const data = await r.json();
+        const entries = data.entries || [];
+        if (memoryCount) {
+            memoryCount.textContent = (q
+                ? `${entries.length} match / ${data.total} total`
+                : `${data.total} entries`);
+        }
+        if (entries.length === 0) {
+            memoryList.innerHTML = '<div class="memory-empty">No memories yet. Have a conversation, or add a fact above.</div>';
+            return;
+        }
+        memoryList.innerHTML = entries.map(e => {
+            const role = (e.role || 'system').toLowerCase();
+            return `<div class="memory-row" data-id="${escapeHtml(e.id)}">
+                <span class="mem-age">${memoryAge(e.ts)}</span>
+                <span class="mem-role role-${escapeHtml(role)}">${escapeHtml(role.toUpperCase())}</span>
+                <span class="mem-content">${escapeHtml(e.content)}</span>
+                <button class="mem-delete" data-id="${escapeHtml(e.id)}">✕</button>
+            </div>`;
+        }).join('');
+        memoryList.querySelectorAll('.mem-delete').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = btn.getAttribute('data-id');
+                if (!id) return;
+                try {
+                    await fetch(api('/api/memory/' + encodeURIComponent(id)), { method: 'DELETE' });
+                } catch (e) {}
+                refreshMemory();
+            });
+        });
+    } catch (e) {
+        memoryList.innerHTML = '<div class="memory-empty">Backend unreachable.</div>';
+    }
+}
+
+if (memorySearch) {
+    memorySearch.addEventListener('input', () => {
+        clearTimeout(memorySearchTimer);
+        memorySearchTimer = setTimeout(refreshMemory, 180);
+    });
+}
+
+if (memoryAddBtn) {
+    memoryAddBtn.addEventListener('click', () => {
+        if (!memoryAddRow) return;
+        memoryAddRow.style.display = '';
+        if (memoryAddContent) { memoryAddContent.value = ''; memoryAddContent.focus(); }
+    });
+}
+
+if (memoryAddCancelBtn) {
+    memoryAddCancelBtn.addEventListener('click', () => {
+        if (memoryAddRow) memoryAddRow.style.display = 'none';
+    });
+}
+
+if (memoryAddConfirmBtn) {
+    memoryAddConfirmBtn.addEventListener('click', async () => {
+        const content = memoryAddContent ? memoryAddContent.value.trim() : '';
+        if (!content) return;
+        try {
+            await fetch(api('/api/memory'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content, namespace: 'fact', role: 'fact', source: 'ui' }),
+            });
+            if (memoryAddRow) memoryAddRow.style.display = 'none';
+            refreshMemory();
+        } catch (e) {}
+    });
+}
+
+if (memoryAddContent) {
+    memoryAddContent.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && memoryAddConfirmBtn) memoryAddConfirmBtn.click();
+        if (e.key === 'Escape' && memoryAddCancelBtn) memoryAddCancelBtn.click();
+    });
+}
+
+if (memoryPurgeBtn) {
+    memoryPurgeBtn.addEventListener('click', async () => {
+        if (!confirm('Erase every stored memory? This cannot be undone.')) return;
+        try {
+            await fetch(api('/api/memory/purge'), { method: 'POST' });
+        } catch (e) {}
+        refreshMemory();
+    });
+}
+
 
 // ═══════════════════════════════════════════════════════
 // VOICE tab — wake word + barge-in conversational mode

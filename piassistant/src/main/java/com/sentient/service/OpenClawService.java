@@ -165,10 +165,24 @@ public class OpenClawService {
 
     public CompletableFuture<String> processCommand(String userPrompt, String modelOverride,
                                                     String imageBase64, String fileName, String fileType) {
+        return processCommand(userPrompt, modelOverride, imageBase64, fileName, fileType, null);
+    }
+
+    /**
+     * Variant accepting a {@code memoryBlock} (built by
+     * {@code MemoryService.buildPromptBlock}) that gets appended to the system
+     * prompt. Null/empty memory block is fine — the prompt just drops the block.
+     */
+    public CompletableFuture<String> processCommand(String userPrompt, String modelOverride,
+                                                    String imageBase64, String fileName, String fileType,
+                                                    String memoryBlock) {
         return CompletableFuture.supplyAsync(() -> {
             String prompt = inlineAttachmentsIfTextual(userPrompt, imageBase64, fileName, fileType);
 
             String systemPrompt = buildChatSystemPrompt();
+            if (memoryBlock != null && !memoryBlock.isBlank()) {
+                systemPrompt = systemPrompt + "\n\n" + memoryBlock;
+            }
             String model = (modelOverride != null && !modelOverride.isBlank() && !"AUTO".equalsIgnoreCase(modelOverride))
                     ? modelOverride
                     : defaultModel;
@@ -327,10 +341,11 @@ public class OpenClawService {
                 "\n\nYou can embed command tags in your response when the user's intent matches. " +
                 "Always include a natural language response alongside any commands.\n" +
                 "Available commands:\n" +
-                "- [CMD:SWITCH_STUDY] / [CMD:SWITCH_HOME] / [CMD:SWITCH_SLEEP] / [CMD:SWITCH_TASKS] / [CMD:SWITCH_CALENDAR] / [CMD:SWITCH_SPOTIFY] — switch screens\n" +
+                "- [CMD:SWITCH_STUDY] / [CMD:SWITCH_HOME] / [CMD:SWITCH_SLEEP] / [CMD:SWITCH_TASKS] / [CMD:SWITCH_CALENDAR] / [CMD:SWITCH_SPOTIFY] / [CMD:SWITCH_MEMORY] — switch screens\n" +
                 "- [CMD:SET_TIMER:N] / [CMD:START_TIMER] / [CMD:PAUSE_TIMER] / [CMD:CANCEL_TIMER] — timer controls\n" +
                 "- [CMD:ADD_TASK:title|description|YYYY-MM-DD] / [CMD:REMOVE_TASK:title] — tasks\n" +
                 "- [CMD:ADD_COMMITMENT:text] / [CMD:REMOVE_COMMITMENT:text] — commitments\n" +
+                "- [CMD:FORGET:topic] — drop stored memories that mention the topic (only when the user explicitly asks)\n" +
                 "- [CMD:ADD_EVENT:title|description|start|end] — calendar events\n" +
                 "- [CMD:CREATE_PLAYLIST:name] — Spotify playlist\n" +
                 "- [CMD:AUTOMATE:name] — fire a configured webhook\n" +
