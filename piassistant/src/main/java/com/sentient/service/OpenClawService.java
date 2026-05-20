@@ -113,7 +113,11 @@ public class OpenClawService {
                     .GET();
             String tok = activeAuthToken();
             if (!tok.isEmpty()) b.header("Authorization", "Bearer " + tok);
-            HttpResponse<Void> r = client.send(b.build(), HttpResponse.BodyHandlers.discarding());
+            String destId = useRemote ? "openclaw_remote" : "openclaw_local";
+            HttpResponse<Void> r = EgressClient.global().send(
+                    client, b.build(), HttpResponse.BodyHandlers.discarding(),
+                    destId, "health-check",
+                    EgressClient.classes(EgressClient.DataClass.TELEMETRY));
             int code = r.statusCode();
             // Any 2xx/4xx response from the right port = it's up. Only network errors mean down.
             return code < 500;
@@ -294,7 +298,12 @@ public class OpenClawService {
         }
 
         try {
-            HttpResponse<String> r = client.send(rb.build(), HttpResponse.BodyHandlers.ofString());
+            String destId = useRemote ? "openclaw_remote" : "openclaw_local";
+            HttpResponse<String> r = EgressClient.global().send(
+                    client, rb.build(), HttpResponse.BodyHandlers.ofString(),
+                    destId, "chat-completion",
+                    EgressClient.classes(EgressClient.DataClass.CHAT_TEXT,
+                            isImage ? EgressClient.DataClass.IMAGE : null));
             int code = r.statusCode();
             String body = r.body();
             System.out.println("[OpenClaw] HTTP " + code + " | bytes=" + (body == null ? 0 : body.length()));
@@ -310,6 +319,9 @@ public class OpenClawService {
             JsonObject json = JsonParser.parseString(body).getAsJsonObject();
             return json.getAsJsonArray("choices").get(0).getAsJsonObject()
                     .getAsJsonObject("message").get("content").getAsString();
+        } catch (EgressClient.EgressDeniedException denied) {
+            return "Error: OpenClaw is blocked by the privacy firewall ("
+                    + denied.reason + "). Re-enable it under Settings → PRIVACY.";
         } catch (java.net.ConnectException ce) {
             return "Error: OpenClaw gateway unreachable at " + base
                     + (useRemote ? ". Is the remote host reachable and the gateway running?"

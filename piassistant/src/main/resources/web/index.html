@@ -595,6 +595,33 @@
                     <div id="localLlmSaveStatus" class="setting-feedback"></div>
                 </div>
 
+                <!-- ── Privacy egress firewall (§15) ──────────────── -->
+                <div class="settings-group" id="settingsPrivacy">
+                    <div class="panel-sub-header">PRIVACY · EGRESS FIREWALL</div>
+                    <div class="setting-hint">
+                        Every outbound HTTP call goes through a single choke-point. Toggle any destination
+                        off and the assistant will refuse to talk to it — useful for proving to yourself
+                        that voice transcripts never reach a cloud LLM, or that Spotify is dormant while
+                        you're in a meeting. Panic mode kills everything except local destinations
+                        (the local LLM, 127.0.0.1 endpoints) until you flip it back.
+                    </div>
+                    <label class="setting-item privacy-panic-row">
+                        <span class="setting-label">🚨 Panic mode (block all outbound except local)</span>
+                        <input type="checkbox" id="egressPanic" class="setting-toggle">
+                    </label>
+                    <div class="egress-list" id="egressList">
+                        <div class="egress-empty">Loading destinations…</div>
+                    </div>
+                    <div class="settings-actions">
+                        <button class="timer-btn play-btn" id="egressRefreshBtn">↻ REFRESH</button>
+                        <button class="timer-btn cancel-btn" id="egressClearBtn">CLEAR COUNTERS</button>
+                    </div>
+                    <div class="panel-sub-header" style="margin-top:18px">RECENT CALLS</div>
+                    <div class="egress-log" id="egressLog">
+                        <div class="egress-empty">No outbound calls yet this session.</div>
+                    </div>
+                </div>
+
                 <!-- ── Composio skills ─────────────────────────────── -->
                 <div class="settings-group" id="settingsComposio">
                     <div class="panel-sub-header">SKILLS · COMPOSIO</div>

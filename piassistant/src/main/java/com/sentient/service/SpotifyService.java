@@ -90,13 +90,16 @@ public class SpotifyService {
             String body = "grant_type=authorization_code"
                     + "&code=" + enc(code)
                     + "&redirect_uri=" + enc(REDIRECT_URI);
-            HttpResponse<String> r = http.send(
+            HttpResponse<String> r = EgressClient.global().send(
+                    http,
                     HttpRequest.newBuilder(URI.create(TOKEN_URL))
                             .header("Authorization", basicAuthHeader())
                             .header("Content-Type", "application/x-www-form-urlencoded")
                             .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                             .build(),
-                    HttpResponse.BodyHandlers.ofString());
+                    HttpResponse.BodyHandlers.ofString(),
+                    "spotify_auth", "oauth-callback",
+                    EgressClient.classes(EgressClient.DataClass.OAUTH_TOKEN));
             if (r.statusCode() != 200) {
                 System.err.println("[Spotify] Token exchange HTTP " + r.statusCode() + ": " + r.body());
                 return false;
@@ -166,13 +169,16 @@ public class SpotifyService {
     private boolean refreshAccessToken() {
         try {
             String body = "grant_type=refresh_token&refresh_token=" + enc(refreshToken);
-            HttpResponse<String> r = http.send(
+            HttpResponse<String> r = EgressClient.global().send(
+                    http,
                     HttpRequest.newBuilder(URI.create(TOKEN_URL))
                             .header("Authorization", basicAuthHeader())
                             .header("Content-Type", "application/x-www-form-urlencoded")
                             .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                             .build(),
-                    HttpResponse.BodyHandlers.ofString());
+                    HttpResponse.BodyHandlers.ofString(),
+                    "spotify_auth", "token-refresh",
+                    EgressClient.classes(EgressClient.DataClass.OAUTH_TOKEN));
             if (r.statusCode() != 200) {
                 System.err.println("[Spotify] Refresh HTTP " + r.statusCode() + ": " + r.body());
                 if (r.statusCode() == 400 || r.statusCode() == 401) authenticated = false;
@@ -665,7 +671,10 @@ public class SpotifyService {
                 case "DELETE": b.DELETE(); break;
                 default:       b.method(method, bp);
             }
-            HttpResponse<String> resp = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = EgressClient.global().send(
+                    http, b.build(), HttpResponse.BodyHandlers.ofString(),
+                    "spotify", method + " " + URI.create(url).getPath(),
+                    EgressClient.classes(EgressClient.DataClass.AUTH));
             return new HttpResp(resp.statusCode(), resp.body() == null ? "" : resp.body());
         } catch (Exception e) {
             System.err.println("[Spotify] " + method + " " + url + " failed: " + e.getMessage());

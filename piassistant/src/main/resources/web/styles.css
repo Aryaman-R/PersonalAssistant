@@ -2201,6 +2201,120 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════
+   PRIVACY · Egress firewall panel pieces
+   ═══════════════════════════════════════════════════ */
+
+.privacy-panic-row .setting-label {
+    color: #f87171;
+    font-weight: 600;
+}
+
+.egress-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 8px 0 6px;
+}
+
+.egress-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    background: var(--bg-soft, #161616);
+    border: 1px solid var(--border-dark, #27272a);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.egress-row.is-local {
+    border-left: 2px solid #4ade80;
+}
+
+.egress-row.is-blocked {
+    opacity: 0.55;
+}
+
+.egress-row .eg-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.egress-row .eg-name {
+    color: var(--text-primary, #e5e7eb);
+    font-weight: 500;
+}
+
+.egress-row .eg-host {
+    color: var(--text-muted);
+    font-size: 11px;
+    letter-spacing: 0.5px;
+}
+
+.egress-row .eg-stat {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+}
+
+.egress-row .eg-toggle {
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background: #444;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.egress-row .eg-toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ddd;
+    transition: transform 0.15s, background 0.15s;
+}
+
+.egress-row.is-on .eg-toggle { background: #4ade80; }
+.egress-row.is-on .eg-toggle::after { transform: translateX(16px); background: #0d0d0d; }
+
+.egress-log {
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid var(--border-dark, #27272a);
+    border-radius: 6px;
+    padding: 4px;
+    background: rgba(0, 0, 0, 0.25);
+}
+
+.egress-log-row {
+    display: grid;
+    grid-template-columns: 60px 90px 1fr 60px 80px;
+    gap: 8px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-family: ui-monospace, Menlo, monospace;
+    color: var(--text-muted);
+}
+
+.egress-log-row.row-deny { color: #f87171; }
+.egress-log-row.row-err  { color: #fbbf24; }
+.egress-log-row.row-ok   { color: #94a3b8; }
+
+.egress-empty {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 20px;
+    font-size: 12px;
+}
+
+/* ═══════════════════════════════════════════════════
    MEMORY Panel (episodic memory)
    ═══════════════════════════════════════════════════ */
 

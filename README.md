@@ -38,6 +38,7 @@ A personal AI assistant that runs on one device and is reachable from every scre
 - **Google Tasks + Calendar**: bi-directional sync. Adding a task in the UI immediately writes to Google; deleting a task removes it from the right Google list. Calendar events created in the UI hit your real Google Calendar.
 - **Tools via Composio**: connect Composio's MCP catalogue (GitHub, Gmail, Slack, Notion, Linear, Jira, Drive, etc.) so the LLM can actually act on those tools.
 - **Episodic memory** (`MEMORY` tab). Every chat turn is appended to `~/.sentient_memories.ndjson`; on every reply, the top-5 most relevant past entries are injected into the LLM's system prompt as a `## Relevant memories` block. Search, manually add facts, delete individual rows, purge everything. Say "forget about X" or have the AI emit `[CMD:FORGET:X]` to drop matching entries. Retrieval is local BM25 + recency boost — no embeddings server required.
+- **Privacy egress firewall** (`Settings → PRIVACY`). Every outbound HTTP call from the assistant is funnelled through one choke-point. Per-destination toggles let you sever any integration (Spotify, Google, Groq, …); per-destination counters show bytes-in, bytes-out, last status. A *Panic Mode* switch blocks everything except local destinations (the local LLM, 127.0.0.1 endpoints) so you can prove with one click that nothing is leaving the device.
 - **Focus timer**, **task lists**, **commitments**, **calendar grid**, **alarms**, **automations** (configurable webhooks the AI can trigger with `[CMD:AUTOMATE:name]`).
 
 ## Quick start
@@ -167,6 +168,7 @@ piassistant/
 │  │  ├─ OpenClawService.java   ── local OpenClaw gateway client
 │  │  ├─ LocalLlmService.java   ── offline LLM (llama.cpp / Ollama / LM Studio …)
 │  │  ├─ MemoryService.java     ── episodic memory store (BM25 over NDJSON)
+│  │  ├─ EgressClient.java      ── privacy firewall (every outbound HTTP funnels through here)
 │  │  ├─ OpenClawConfigManager.java ── reads/writes ~/.config/openclaw/openclaw.json5
 │  │  ├─ SetupService.java      ── prereq probes, .env writer, installer runners
 │  │  ├─ SpotifyService.java

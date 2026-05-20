@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.sentient.service.AuthService;
 import com.sentient.service.AutomationService;
 import com.sentient.service.CredentialVault;
+import com.sentient.service.EgressClient;
 import com.sentient.service.GoogleTasksService;
 import com.sentient.service.GoogleCalendarService;
 import com.sentient.service.GroqService;
@@ -2026,6 +2027,61 @@ public class WebServer {
             com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
             for (JsonObject m : deviceMeta.values()) arr.add(m);
             ctx.json(arr);
+        });
+
+        // ── Privacy egress firewall (§15) ──────────────────────
+        // Snapshot of every destination + the recent-call ring buffer.
+        app.get("/api/egress", ctx -> {
+            EgressClient ec = EgressClient.global();
+            JsonObject root = ec.snapshot();
+            com.google.gson.JsonArray logArr = new com.google.gson.JsonArray();
+            int limit = 100;
+            try {
+                String l = ctx.queryParam("logLimit");
+                if (l != null && !l.isBlank()) limit = Math.min(500, Math.max(1, Integer.parseInt(l)));
+            } catch (NumberFormatException ignored) {}
+            for (EgressClient.LogEntry e : ec.recentLog(limit)) logArr.add(ec.toJson(e));
+            root.add("log", logArr);
+            ctx.result(root.toString());
+            ctx.contentType("application/json");
+        });
+
+        // Toggle a destination on/off.
+        app.post("/api/egress/destination", ctx -> {
+            JsonObject body = ctx.body() == null || ctx.body().isBlank()
+                    ? new JsonObject() : gson.fromJson(ctx.body(), JsonObject.class);
+            String id = getStr(body, "id", "").trim();
+            if (id.isEmpty()) {
+                ctx.status(400).result("{\"error\":\"'id' required\"}");
+                return;
+            }
+            boolean allowed = body.has("allowed") && body.get("allowed").getAsBoolean();
+            EgressClient.global().setAllowed(id, allowed);
+            ctx.result(EgressClient.global().snapshot().toString());
+            ctx.contentType("application/json");
+        });
+
+        // Panic toggle — flips global mode that blocks everything except local LLM.
+        app.post("/api/egress/panic", ctx -> {
+            JsonObject body = ctx.body() == null || ctx.body().isBlank()
+                    ? new JsonObject() : gson.fromJson(ctx.body(), JsonObject.class);
+            boolean on = body.has("on") && body.get("on").getAsBoolean();
+            EgressClient.global().setPanicMode(on);
+            JsonObject info = new JsonObject();
+            info.addProperty("type", "system");
+            info.addProperty("text", on
+                    ? "🔒 Privacy panic mode ON — only local destinations are reachable."
+                    : "🔓 Privacy panic mode OFF.");
+            broadcast(info);
+            ctx.result(EgressClient.global().snapshot().toString());
+            ctx.contentType("application/json");
+        });
+
+        // Wipe counters + log.
+        app.post("/api/egress/clear", ctx -> {
+            EgressClient.global().clearStats();
+            ctx.result("{\"success\":true}");
+            ctx.contentType("application/json");
         });
 
         // ── Credential vault (env vars + service logins) ───────

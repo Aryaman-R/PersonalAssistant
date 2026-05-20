@@ -248,12 +248,15 @@ public class GoogleCalendarService {
                     + "&client_id=" + enc(CLIENT_ID)
                     + "&client_secret=" + enc(CLIENT_SECRET)
                     + "&grant_type=refresh_token";
-            HttpResponse<String> resp = http.send(
+            HttpResponse<String> resp = EgressClient.global().send(
+                    http,
                     HttpRequest.newBuilder(URI.create(TOKEN_URL))
                             .header("Content-Type", "application/x-www-form-urlencoded")
                             .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                             .build(),
-                    HttpResponse.BodyHandlers.ofString());
+                    HttpResponse.BodyHandlers.ofString(),
+                    "google_oauth", "token-refresh",
+                    EgressClient.classes(EgressClient.DataClass.OAUTH_TOKEN));
             if (resp.statusCode() == 200) {
                 JsonObject json = JsonParser.parseString(resp.body()).getAsJsonObject();
                 accessToken = json.get("access_token").getAsString();
@@ -327,7 +330,10 @@ public class GoogleCalendarService {
                 case "PATCH":  b.method("PATCH", bp); break;
                 default:       b.method(method, bp);
             }
-            HttpResponse<String> resp = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = EgressClient.global().send(
+                    http, b.build(), HttpResponse.BodyHandlers.ofString(),
+                    "google", method + " " + URI.create(url).getPath(),
+                    EgressClient.classes(EgressClient.DataClass.CALENDAR_EVENT));
             return new HttpResp(resp.statusCode(), resp.body() == null ? "" : resp.body());
         } catch (Exception e) {
             System.err.println("[GoogleCalendar] " + method + " " + url + " failed: " + e.getMessage());

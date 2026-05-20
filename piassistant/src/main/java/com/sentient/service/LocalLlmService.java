@@ -97,7 +97,10 @@ public class LocalLlmService {
                         .timeout(Duration.ofSeconds(3))
                         .GET();
                 if (!authToken.isEmpty()) b.header("Authorization", "Bearer " + authToken);
-                HttpResponse<Void> r = client.send(b.build(), HttpResponse.BodyHandlers.discarding());
+                HttpResponse<Void> r = EgressClient.global().send(
+                        client, b.build(), HttpResponse.BodyHandlers.discarding(),
+                        "local_llm", "health-check",
+                        EgressClient.classes(EgressClient.DataClass.TELEMETRY));
                 if (r.statusCode() < 500) return true;
             } catch (Exception ignored) {
                 // try the next probe
@@ -262,7 +265,11 @@ public class LocalLlmService {
         if (!authToken.isEmpty()) rb.header("Authorization", "Bearer " + authToken);
 
         try {
-            HttpResponse<String> r = client.send(rb.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> r = EgressClient.global().send(
+                    client, rb.build(), HttpResponse.BodyHandlers.ofString(),
+                    "local_llm", "chat-completion",
+                    EgressClient.classes(EgressClient.DataClass.CHAT_TEXT,
+                            imageBase64 != null ? EgressClient.DataClass.IMAGE : null));
             int code = r.statusCode();
             String body = r.body();
             System.out.println("[LocalLlm] HTTP " + code + " | bytes=" + (body == null ? 0 : body.length()));
@@ -281,6 +288,9 @@ public class LocalLlmService {
             JsonObject json = JsonParser.parseString(body).getAsJsonObject();
             return json.getAsJsonArray("choices").get(0).getAsJsonObject()
                     .getAsJsonObject("message").get("content").getAsString();
+        } catch (EgressClient.EgressDeniedException denied) {
+            return "Error: Local LLM is blocked by the privacy firewall ("
+                    + denied.reason + "). Re-enable it under Settings → PRIVACY.";
         } catch (java.net.ConnectException ce) {
             return "Error: Local LLM unreachable at " + baseUrl
                     + ". Is the server running? llama.cpp default: './server -m model.gguf --port 8080'.";

@@ -394,7 +394,11 @@ public class GroqService {
                     Thread.sleep(1000L * attempt); // back-off: 1s, 2s
                 }
 
-                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = EgressClient.global().send(
+                        client, request, HttpResponse.BodyHandlers.ofString(),
+                        "groq", "chat-completion",
+                        EgressClient.classes(EgressClient.DataClass.CHAT_TEXT,
+                                imageBase64 != null ? EgressClient.DataClass.IMAGE : null));
                 String body = response.body();
                 int statusCode = response.statusCode();
 
@@ -440,6 +444,11 @@ public class GroqService {
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 return "Error: Request interrupted.";
+            } catch (EgressClient.EgressDeniedException denied) {
+                // Don't retry — policy is the same on the next attempt. Surface
+                // the deny reason directly so the user knows where to look.
+                return "Error: Groq is blocked by the privacy firewall ("
+                        + denied.reason + "). Re-enable it under Settings → PRIVACY.";
             } catch (Exception e) {
                 lastException = e;
                 System.err.println("[Groq] API Error (attempt " + (attempt + 1) + "): " + e.getMessage());
