@@ -12,6 +12,72 @@ trusting any single piece of hardware.
 
 ---
 
+## Status — 2026-05-20
+
+A quick-read snapshot of where this branch sits today. Detail lives in
+the per-phase sections below.
+
+### ✅ Done (this branch, 5 commits)
+
+**The replication backbone is in.** Every state mutation that used to
+go through `ProfileManager` now flows through a CRDT op log; the legacy
+`user_profile.json` is now a derived snapshot of that log. Two masters
+in the same JVM can already converge state by exchanging ops in-memory
+(the `MeshSelfTest` covers exactly this — local mutations on one doc,
+mirrored to another via `applyRemote`, end up with identical state).
+Pairing-phrase generation, HKDF key derivation, peer-list persistence,
+and the Settings → MESH UI panel are all wired locally.
+
+| Piece | File(s) | Status |
+|---|---|---|
+| Phased delivery plan | `MESH_PLAN.md` | ✅ |
+| CRDT primitives (HLC, HlcClock, LwwRegister, OrSet) | `mesh/{HLC,HlcClock,LwwRegister,OrSet}.java` | ✅ |
+| Op + JSON serialization | `mesh/Op.java` | ✅ |
+| Append-only op log + dedup + replay-on-boot | `mesh/OpLog.java` | ✅ |
+| ReplicatedState (apply / read) + ReplicatedDoc (clock + log + origin) | `mesh/ReplicatedState.java`, `mesh/ReplicatedDoc.java` | ✅ |
+| Stable per-master UUID | `mesh/MasterId.java` (→ `~/.sentient_master_id`) | ✅ |
+| ProfileManager rewired through op log, with reconcile-on-saveProfile that catches legacy direct-mutation patterns | `util/ProfileManager.java` | ✅ |
+| One-shot migration from legacy `user_profile.json` | inside `ProfileManager` ctor | ✅ |
+| Peer-list persistence (paired peers + their HMAC keys) | `mesh/PeerRegistry.java` (→ `~/.sentient_mesh_peers.json`, 0600) | ✅ |
+| 6-word pairing phrase generator + constant-time validator | `mesh/PairingPhrase.java` | ✅ |
+| HMAC-SHA256 + HKDF-SHA256 (no JNI) | `mesh/MeshCrypto.java` | ✅ |
+| MeshService skeleton + `GET /api/mesh/info` | `mesh/MeshService.java`, `WebServer.java` | ✅ |
+| Settings → MESH UI panel | `index.html`, `app.js`, `styles.css` | ✅ |
+| Tests: 19-assertion `MeshSelfTest` + sandbox-rooted `ProfileManagerScenario` | `mesh/MeshSelfTest.java`, `mesh/ProfileManagerScenario.java` | ✅ |
+
+**Test coverage today:**
+- `MeshSelfTest`: HLC ordering / monotonicity / receive-merge; LwwRegister later-wins + earlier-rejected; OrSet add / remove / concurrent-add / re-add; Op JSON round-trip; OpLog append + dedup + readback; ReplicatedState idempotent apply + older-HLC rejection; ReplicatedDoc local mutators + bootstrap restore + remote idempotency; **two-doc convergence** (all ops shared); **two-doc concurrent-edit resolution** (LWW deterministic, OR-Set add-wins); OpListener fires once per fresh op only.
+- `ProfileManagerScenario`: legacy `user_profile.json` migrates → 15 ops emitted; typed setters work; legacy direct-mutation pattern (`task.googleId = …`) reconciled into ops at `saveProfile()`; reflective "restart" preserves state; master id stable across restarts; restart emits zero redundant ops.
+
+### 🔲 Not yet done
+
+| Phase | Scope | Status |
+|---|---|---|
+| **Phase 2** | Real two-master sync over the wire (`/mesh-sync` WS endpoint, the pair_hello → pair_challenge → pair_complete handshake, vector-clock op exchange, gossip re-broadcast, `origin_master_id` on every existing WS broadcast, two-master end-to-end integration test) | ⏳ next |
+| **Phase 3** | Browser transparent failover (`peers` list pushed to clients, dedup of broadcasts, "bound master" sidebar badge) | ⏳ |
+| **Phase 4** | Auto-discovery (mDNS via `jmdns`, Tailscale-tag enumeration, "discovered peers" UI) | ⏳ |
+| **Phase 5** | Hardening (proper Noise XX handshake replacing the HKDF stub; anti-replay; replication-exclusion regression test; optional TLS for `/mesh-sync`) | ⏳ |
+
+**What's specifically blocked vs. nice-to-have for Phase 2:**
+
+- **Blocked-only:** the `/mesh-sync` endpoint + sync loop + pair_hello/challenge/complete handshake + the two-master end-to-end test. Until those land, nothing actually crosses the wire.
+- **Nice-to-have for Phase 2 (could slip):** gossip re-broadcast (only relevant once there are ≥3 paired peers); `origin_master_id` on the *existing* `/ws` browser broadcasts (only matters when a browser is connected to ≥2 masters at once, which is also blocked until browser failover ships in Phase 3).
+
+**Foundations already laid for Phase 2 (don't re-design these):**
+`PairingPhrase.generate / normalize / equalsConstantTime / isWellFormed`,
+`MeshCrypto.hmacSha256 / hkdfSha256 / derivePairKey / constantTimeEquals`,
+`PeerRegistry.createPendingPhrase / redeemPhrase / upsert / recordSync`,
+`MeshService.setOpListener` (fan-out hook),
+`ReplicatedDoc.applyRemote` (idempotent inbound apply, already covered by tests).
+
+### Open design questions (carried forward)
+
+- Should chat history opt-in to replicate? Currently per-master. Knob in MESH settings is cheap; defer until voice ID (§3) lands so we can scope per-user.
+- Should Spotify playback state replicate? Almost certainly not — speakers are physical, tied to one master's LAN.
+- Conflict-resolution UI? v1 just LWW-picks. If users start losing edits, add a "merge conflicts" feed in the MESH panel.
+
+---
+
 ## What replicates vs. what stays per-master
 
 The hard rule: **the vault, auth state, and OAuth tokens never leave the
