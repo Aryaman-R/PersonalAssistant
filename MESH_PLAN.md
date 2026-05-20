@@ -17,16 +17,16 @@ trusting any single piece of hardware.
 A quick-read snapshot of where this branch sits today. Detail lives in
 the per-phase sections below.
 
-### ✅ Done (this branch, 5 commits)
+### ✅ Done (this branch, 7 commits)
 
-**The replication backbone is in.** Every state mutation that used to
-go through `ProfileManager` now flows through a CRDT op log; the legacy
-`user_profile.json` is now a derived snapshot of that log. Two masters
-in the same JVM can already converge state by exchanging ops in-memory
-(the `MeshSelfTest` covers exactly this — local mutations on one doc,
-mirrored to another via `applyRemote`, end up with identical state).
-Pairing-phrase generation, HKDF key derivation, peer-list persistence,
-and the Settings → MESH UI panel are all wired locally.
+**The replication backbone is in AND two masters can now actually pair
++ sync over a real WebSocket.** Every state mutation that used to go
+through `ProfileManager` flows through a CRDT op log; the legacy
+`user_profile.json` is a derived snapshot of that log. Phase 2 added
+the wire layer — paired masters exchange a vector clock + missing ops
+via `/mesh-sync` and converge. The Phase 2 integration test boots two
+real Javalin instances in-process on ephemeral ports, runs the full
+pair flow, mutates state on each side, and asserts convergence.
 
 | Piece | File(s) | Status |
 |---|---|---|
@@ -42,33 +42,61 @@ and the Settings → MESH UI panel are all wired locally.
 | 6-word pairing phrase generator + constant-time validator | `mesh/PairingPhrase.java` | ✅ |
 | HMAC-SHA256 + HKDF-SHA256 (no JNI) | `mesh/MeshCrypto.java` | ✅ |
 | MeshService skeleton + `GET /api/mesh/info` | `mesh/MeshService.java`, `WebServer.java` | ✅ |
-| Settings → MESH UI panel | `index.html`, `app.js`, `styles.css` | ✅ |
-| Tests: 19-assertion `MeshSelfTest` + sandbox-rooted `ProfileManagerScenario` | `mesh/MeshSelfTest.java`, `mesh/ProfileManagerScenario.java` | ✅ |
+| Settings → MESH UI panel (read-only — pair button is still a Phase 2 stub) | `index.html`, `app.js`, `styles.css` | ✅ |
+| **Phase 2 wire protocol** (`pair_hello` / `pair_challenge` / `pair_complete` / `paired`; `auth_hello` / `auth_ok`; `vector` / `ops`; `error`; HMAC domain-separation) | `mesh/MeshSyncProtocol.java` | ✅ |
+| **Phase 2 server-side state machine** (per-WS session: pairing OR auth → AUTHED → handle vector/ops) | `mesh/MeshSyncSession.java` | ✅ |
+| **Phase 2 outbound client** (Java 17 `HttpClient.newWebSocketBuilder` — zero new deps; `pairWith(phrase)` and `connectAuthenticated(id)` entry points; returns a future with op-count result) | `mesh/MeshSyncClient.java` | ✅ |
+| **Phase 2 `/mesh-sync` WS endpoint + REST**: `POST /api/mesh/pair/start`, `POST /api/mesh/pair/redeem`, `POST /api/mesh/sync/{peerId}`, `DELETE /api/mesh/peers/{peerId}` | `WebServer.java` | ✅ |
+| **Phase 2 integration test**: two real Javalin masters in one JVM, three cases (pair+sync converges; auth-reconnect propagates a fresh op; wrong phrase fails cleanly with no persistence) | `mesh/MeshSyncScenario.java` | ✅ |
+| Tests: 19-assertion `MeshSelfTest` + sandbox-rooted `ProfileManagerScenario` + 3-case `MeshSyncScenario` | `mesh/MeshSelfTest.java`, `mesh/ProfileManagerScenario.java`, `mesh/MeshSyncScenario.java` | ✅ |
 
 **Test coverage today:**
 - `MeshSelfTest`: HLC ordering / monotonicity / receive-merge; LwwRegister later-wins + earlier-rejected; OrSet add / remove / concurrent-add / re-add; Op JSON round-trip; OpLog append + dedup + readback; ReplicatedState idempotent apply + older-HLC rejection; ReplicatedDoc local mutators + bootstrap restore + remote idempotency; **two-doc convergence** (all ops shared); **two-doc concurrent-edit resolution** (LWW deterministic, OR-Set add-wins); OpListener fires once per fresh op only.
 - `ProfileManagerScenario`: legacy `user_profile.json` migrates → 15 ops emitted; typed setters work; legacy direct-mutation pattern (`task.googleId = …`) reconciled into ops at `saveProfile()`; reflective "restart" preserves state; master id stable across restarts; restart emits zero redundant ops.
+- `MeshSyncScenario`: two Javalin masters in one JVM on ephemeral ports + sandboxed home dirs; **pair + sync** drives the full handshake and verifies both replicas hold the same LWW winner + the union of OR-Set adds; **auth + reconnect** uses the stored HMAC key (no phrase) and propagates a fresh op; **wrong-phrase** fails cleanly with `no_phrase` / `remote_error` and neither side persists the other.
 
 ### 🔲 Not yet done
 
 | Phase | Scope | Status |
 |---|---|---|
-| **Phase 2** | Real two-master sync over the wire (`/mesh-sync` WS endpoint, the pair_hello → pair_challenge → pair_complete handshake, vector-clock op exchange, gossip re-broadcast, `origin_master_id` on every existing WS broadcast, two-master end-to-end integration test) | ⏳ next |
+| **Phase 2 — remainder** | Persistent sync connections + gossip on local ops (so mutations after the initial round propagate live); `origin_master_id` field on every existing `/ws` broadcast (lays Phase 3 groundwork); MESH-panel pairing UX in the browser (the REST endpoints exist, the UI buttons don't drive them yet); reconnect-with-backoff in `MeshSyncClient` | ⏳ next |
 | **Phase 3** | Browser transparent failover (`peers` list pushed to clients, dedup of broadcasts, "bound master" sidebar badge) | ⏳ |
 | **Phase 4** | Auto-discovery (mDNS via `jmdns`, Tailscale-tag enumeration, "discovered peers" UI) | ⏳ |
 | **Phase 5** | Hardening (proper Noise XX handshake replacing the HKDF stub; anti-replay; replication-exclusion regression test; optional TLS for `/mesh-sync`) | ⏳ |
 
-**What's specifically blocked vs. nice-to-have for Phase 2:**
+**Phase 2 — what's left, ordered by user-visibility:**
 
-- **Blocked-only:** the `/mesh-sync` endpoint + sync loop + pair_hello/challenge/complete handshake + the two-master end-to-end test. Until those land, nothing actually crosses the wire.
-- **Nice-to-have for Phase 2 (could slip):** gossip re-broadcast (only relevant once there are ≥3 paired peers); `origin_master_id` on the *existing* `/ws` browser broadcasts (only matters when a browser is connected to ≥2 masters at once, which is also blocked until browser failover ships in Phase 3).
+1. **Gossip / persistent connections.** Today sync is a one-shot vector
+   exchange. After it completes, the WS closes; a new mutation only
+   propagates if someone re-calls `POST /api/mesh/sync/{peerId}` or
+   re-pairs. To make edits flow live we need: an `MeshSyncOutbound`
+   interface implemented by both sides, a `MeshSyncBroadcaster` that
+   the `ReplicatedDoc.OpListener` feeds into, and a keep-alive mode in
+   `MeshSyncClient`. Once that lands, `MeshService.maintainPeerConnections()`
+   can dial every paired peer at boot and keep the connection up with
+   jittered exponential-backoff reconnect.
+2. **MESH panel pairing UX.** Backend is done; the UI just needs two
+   buttons: "GENERATE PHRASE" → calls `POST /api/mesh/pair/start`,
+   shows the 6-word phrase + 60 s countdown; "PAIR WITH MASTER" →
+   prompts for host:port + phrase, calls `POST /api/mesh/pair/redeem`,
+   shows the result. The current button still says "Phase 2 — coming
+   soon."
+3. **`origin_master_id` on `/ws` broadcasts.** Phase 3 needs this for
+   browser dedup, but it's a Phase 2 footprint change (touches every
+   `broadcast(...)` callsite in `WebServer.java`). Cheap to add now.
 
-**Foundations already laid for Phase 2 (don't re-design these):**
+**Foundations already laid (don't re-design these):**
 `PairingPhrase.generate / normalize / equalsConstantTime / isWellFormed`,
 `MeshCrypto.hmacSha256 / hkdfSha256 / derivePairKey / constantTimeEquals`,
-`PeerRegistry.createPendingPhrase / redeemPhrase / upsert / recordSync`,
-`MeshService.setOpListener` (fan-out hook),
-`ReplicatedDoc.applyRemote` (idempotent inbound apply, already covered by tests).
+`PeerRegistry.createPendingPhrase / redeemPhrase / upsert / recordSync /
+get / sortedByMasterId`,
+`MeshSyncProtocol.payload{PairChallenge,PairComplete,AuthHello,AuthOk}`,
+`MeshSyncClient.{pairWith,connectAuthenticated}` (both return a
+`CompletableFuture<Result>` with op counts + error code),
+`MeshSyncSession` (server-side state machine — currently registers no
+op listener; gossip work just needs it to subscribe + push),
+`MeshService.setOpListener` (fan-out hook on the doc),
+`ReplicatedDoc.applyRemote` (idempotent inbound apply).
 
 ### Open design questions (carried forward)
 
@@ -337,41 +365,56 @@ Each bullet was at most one commit. Five commits total on this branch:
 
 ---
 
-## Phase 2 (next branch)
+## Phase 2 (this branch — partial)
 
-Phase 1 left some foundation pieces in place for Phase 2 to build on:
-{`PairingPhrase`, `MeshCrypto.derivePairKey`, `PeerRegistry.createPendingPhrase`,
-`PeerRegistry.redeemPhrase`, `MeshService.setOpListener`} are all wired
-locally — they just don't speak to anything over the wire yet.
+Phase 1 left foundation pieces (PairingPhrase, MeshCrypto.derivePairKey,
+PeerRegistry's pending-phrase + upsert, ReplicatedDoc.applyRemote,
+MeshService.setOpListener). Phase 2 builds the wire layer on top.
 
-- [ ] `/mesh-sync` WS endpoint on `WebServer` — separate from `/ws`
+- [x] `/mesh-sync` WS endpoint on `WebServer` — separate from `/ws`
       (browsers) and `/helper` (native OS helpers). HMAC-authenticated
-      using the per-peer signing key from `PeerRegistry`.
-- [ ] Pairing protocol on `/mesh-sync`:
-      1. Joiner sends `pair_hello { masterId, nonce_j }`.
+      via the per-peer signing key from `PeerRegistry`.
+- [x] Pairing protocol on `/mesh-sync`:
+      1. Joiner sends `pair_hello { masterId, nonce, phrase }`.
       2. Initiator looks up the pending phrase via
          `PeerRegistry.redeemPhrase`; if found, derives the same key
          (it's HKDF-deterministic on the phrase) and sends
-         `pair_challenge { masterId, nonce_i,
-          hmac = HMAC(K, "I" || masterId || nonce_j) }`.
+         `pair_challenge { masterId, nonce, hmac }`.
       3. Joiner verifies + responds
-         `pair_complete { hmac = HMAC(K, "J" || masterId || nonce_i) }`.
-      4. Both call `PeerRegistry.upsert(masterId, url, K)`.
-- [ ] `MeshSyncClient`: dial each paired peer, run the auth handshake
-      using the stored key, then enter the sync loop. Retry with
-      jittered exponential backoff on disconnect.
-- [ ] Vector-clock-based op exchange:
-      `A → B  { type:"vector", lastSeen: { node-uuid → HLC.encode() } }`
-      `B → A  { type:"ops", ops: [<Op>...] }`  (only ops B has whose
-      `hlc` > A's lastSeen for that origin) ... until both sides settle.
-- [ ] Gossip re-broadcast: route newly accepted remote ops to every
-      OTHER paired peer (avoid the originator + the immediate sender).
-- [ ] `origin_master_id` field on every existing WS broadcast.
-      Browsers dedupe by `(origin_master_id, broadcast_seq)`.
-- [ ] First-pass mesh end-to-end test (run inside the JVM, two
-      `MeshService` instances + two `ReplicatedDoc`s + two `OpLog`s
-      in temp dirs): pair them, mutate state on one, assert
-      convergence on the other within 200 ms wallclock.
+         `pair_complete { hmac }`.
+      4. Initiator sends `paired { masterId }`.
+      5. Both call `PeerRegistry.upsert(masterId, url, K)`.
+- [x] Auth handshake for already-paired peers:
+      `auth_hello { masterId, nonce, hmac }` →
+      `auth_ok    { masterId, nonce, hmac }`.
+- [x] `MeshSyncClient`: dial a peer, run the joiner/auth handshake,
+      drive one round of vector + ops exchange.
+- [x] Vector-clock-based op exchange:
+      `A → B  { type:"vector", lastSeen: { origin → HLC.encode() } }`
+      `B → A  { type:"ops", ops: [<Op>...], done }`. Both sides
+      initiate; convergence guaranteed because applyRemote is idempotent.
+- [x] REST surface: `POST /api/mesh/pair/start` (init generates phrase),
+      `POST /api/mesh/pair/redeem` (joiner pairs against host+phrase),
+      `POST /api/mesh/sync/{peerId}` (re-sync via stored key),
+      `DELETE /api/mesh/peers/{peerId}`.
+- [x] In-JVM end-to-end test (`MeshSyncScenario`) — two real Javalin
+      masters on ephemeral ports inside one JVM, sandboxed home dirs;
+      three cases (pair+sync, auth-reconnect, wrong-phrase).
+- [ ] **Persistent connections + gossip**: keep the WS open after the
+      first round; subscribe to `ReplicatedDoc.OpListener`; when a
+      local op fires, push it as a single-op `ops` message to every
+      connected peer except the op's origin. `MeshSyncOutbound`
+      interface + `MeshSyncBroadcaster` carry the fan-out. This is
+      what makes edits flow live (today a mutation after pairing
+      requires a manual `POST /api/mesh/sync/{peerId}` to propagate).
+- [ ] Reconnect-with-backoff: jittered exponential, capped at ~60 s.
+      `MeshService.maintainPeerConnections()` schedules a periodic dial
+      for every peer in the registry that isn't currently connected.
+- [ ] `origin_master_id` field on every existing WS broadcast in
+      `WebServer.java`. Browsers dedupe by `(origin_master_id, seq)`
+      once Phase 3 ships failover.
+- [ ] MESH panel pairing UX (HTML + JS): "GENERATE PHRASE" + "PAIR
+      WITH MASTER" buttons that drive the REST endpoints above.
 
 ## Phase 3 (next-next branch)
 
