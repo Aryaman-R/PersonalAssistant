@@ -57,6 +57,7 @@ public class WebServer {
     private final AuthService auth;
     private final CredentialVault vault;
     private final SetupService setup;
+    private final com.sentient.mesh.MeshService mesh;
     private Listener listener;
 
     // Active WebSocket clients
@@ -92,6 +93,11 @@ public class WebServer {
         this.auth = new AuthService();
         this.vault = new CredentialVault();
         this.setup = new SetupService(this.openClawConfig);
+        // Mesh layer — Phase 1 is read-only (peer-list persistence + UI info).
+        // ProfileManager owns the ReplicatedDoc that backs replicated state.
+        this.mesh = new com.sentient.mesh.MeshService(
+                ProfileManager.getInstance().replicatedDoc(),
+                new com.sentient.mesh.PeerRegistry());
 
         this.app = Javalin.create(config -> {
             config.staticFiles.add("/web", Location.CLASSPATH);
@@ -2265,6 +2271,14 @@ public class WebServer {
             JsonObject result = enable ? tailscale.enableFunnel(PORT) : tailscale.disableFunnel();
             int status = result.has("error") ? 500 : 200;
             ctx.status(status).result(result.toString());
+            ctx.contentType("application/json");
+        });
+
+        // ── Mesh (STRETCH §9) Endpoints — Phase 1: info only ───
+        // Phase 2 will land /api/mesh/pair/* (generate/redeem) + the
+        // /mesh-sync WS endpoint. For now the panel just reads info.
+        app.get("/api/mesh/info", ctx -> {
+            ctx.result(mesh.infoJson().toString());
             ctx.contentType("application/json");
         });
 

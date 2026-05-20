@@ -648,6 +648,48 @@
                     <div id="composioSaveStatus" class="setting-feedback"></div>
                 </div>
 
+                <!-- ── Mesh (STRETCH §9 — multi-master CRDT sync) ── -->
+                <div class="settings-group" id="settingsMesh">
+                    <div class="panel-sub-header">MESH · MULTI-MASTER SYNC</div>
+                    <div class="setting-hint">
+                        STRETCH §9. This master can pair with other Sentient masters to share
+                        replicated state — tasks, commitments, habits, events, calendar — over a
+                        CRDT layer. The shared-state truth lives in a local op log; nothing in the
+                        credential vault, OAuth tokens, or chat history ever crosses the mesh.
+                        See <code>MESH_PLAN.md</code> for the full design.
+                        <br><br>
+                        <strong>Phase 1 (this build):</strong> peer-list persistence + local state
+                        replication. <strong>Phase 2 (next build):</strong> actual sync protocol
+                        between paired masters + browser failover.
+                    </div>
+                    <div class="setting-status-row">
+                        <span class="setting-label">This master's ID</span>
+                        <span class="setting-status" id="meshMasterIdBadge" style="font-family:monospace;font-size:11px">…</span>
+                        <button class="timer-btn play-btn" id="meshRefreshBtn" style="margin-left:auto">↻ REFRESH</button>
+                    </div>
+                    <div class="setting-status-row">
+                        <span class="setting-label">Phase</span>
+                        <span class="setting-status" id="meshPhaseBadge">PHASE 1</span>
+                    </div>
+                    <div class="setting-status-row">
+                        <span class="setting-label">Op log</span>
+                        <span class="setting-status" id="meshOpLogBadge" style="font-family:monospace;font-size:11px">—</span>
+                    </div>
+                    <div class="setting-status-row">
+                        <span class="setting-label">Replicated paths</span>
+                        <span class="setting-status" id="meshStateBadge">—</span>
+                    </div>
+                    <div class="setting-status-row">
+                        <span class="setting-label">Paired peers</span>
+                        <span class="setting-status" id="meshPeersBadge">0</span>
+                    </div>
+                    <div class="mesh-peer-list" id="meshPeerList"></div>
+                    <div class="settings-actions">
+                        <button class="timer-btn play-btn" id="meshPairBtn" title="Phase 2 — not wired yet">PAIR WITH ANOTHER MASTER</button>
+                    </div>
+                    <div class="setting-feedback" id="meshFeedback"></div>
+                </div>
+
                 <!-- ── Tailscale Funnel (public URL on the master) ── -->
                 <div class="settings-group" id="settingsTailscale">
                     <div class="panel-sub-header">REMOTE ACCESS · TAILSCALE FUNNEL</div>

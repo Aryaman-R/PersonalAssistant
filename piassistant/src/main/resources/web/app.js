@@ -3242,6 +3242,79 @@ if (tailscaleDisableBtn) tailscaleDisableBtn.addEventListener('click', () => tog
 // Initial probe (cheap GET; safe if backend isn't reachable)
 setTimeout(refreshTailscaleStatus, 1500);
 
+// ── Mesh (STRETCH §9) UI ────────────────────────────────
+const meshMasterIdBadge = document.getElementById('meshMasterIdBadge');
+const meshPhaseBadge = document.getElementById('meshPhaseBadge');
+const meshOpLogBadge = document.getElementById('meshOpLogBadge');
+const meshStateBadge = document.getElementById('meshStateBadge');
+const meshPeersBadge = document.getElementById('meshPeersBadge');
+const meshPeerList = document.getElementById('meshPeerList');
+const meshRefreshBtn = document.getElementById('meshRefreshBtn');
+const meshPairBtn = document.getElementById('meshPairBtn');
+const meshFeedback = document.getElementById('meshFeedback');
+
+function abbrevId(id) {
+    if (!id) return '—';
+    return id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
+}
+function abbrevPath(p) {
+    if (!p) return '—';
+    return p.length > 60 ? `…${p.slice(-58)}` : p;
+}
+
+async function refreshMeshInfo() {
+    if (!meshMasterIdBadge) return;
+    meshMasterIdBadge.textContent = '…';
+    if (meshPeersBadge) meshPeersBadge.textContent = '…';
+    try {
+        const r = await fetch(api('/api/mesh/info'));
+        if (!r.ok) {
+            meshMasterIdBadge.textContent = `HTTP ${r.status}`;
+            return;
+        }
+        const data = await r.json();
+        meshMasterIdBadge.textContent = data.masterId || '—';
+        meshMasterIdBadge.title = data.masterId || '';
+        if (meshPhaseBadge) {
+            meshPhaseBadge.textContent = `PHASE ${data.phase || '?'}`;
+            meshPhaseBadge.className = 'setting-status status-online';
+            meshPhaseBadge.title = data.phaseNote || '';
+        }
+        if (meshOpLogBadge) meshOpLogBadge.textContent = abbrevPath(data.opLogPath);
+        if (meshStateBadge && data.state) {
+            const lww = data.state.lww_paths != null ? data.state.lww_paths : '?';
+            const orset = data.state.orset_paths != null ? data.state.orset_paths : '?';
+            meshStateBadge.textContent = `${lww} LWW · ${orset} OR-Set`;
+        }
+        if (meshPeersBadge) meshPeersBadge.textContent = String(data.peerCount || 0);
+        if (meshPeerList) {
+            if (!data.peers || data.peers.length === 0) {
+                meshPeerList.innerHTML = '<div class="setting-hint" style="margin-top:6px">No paired peers yet.</div>';
+            } else {
+                meshPeerList.innerHTML = data.peers.map(p => `
+                    <div class="mesh-peer-row">
+                        <span class="mesh-peer-id" title="${p.masterId}">${abbrevId(p.masterId)}</span>
+                        <span class="mesh-peer-url">${p.url || '(no url)'}</span>
+                        <span class="mesh-peer-meta">key: ${p.hasKey ? '✓' : '—'}</span>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (e) {
+        meshMasterIdBadge.textContent = 'unreachable';
+    }
+}
+
+if (meshRefreshBtn) meshRefreshBtn.addEventListener('click', refreshMeshInfo);
+if (meshPairBtn) meshPairBtn.addEventListener('click', () => {
+    if (!meshFeedback) return;
+    meshFeedback.className = 'setting-feedback';
+    meshFeedback.textContent = 'Pairing arrives in Phase 2 — the peer-list backbone is wired today; ' +
+            'the sync protocol + handshake land in the next branch. See MESH_PLAN.md.';
+});
+
+setTimeout(refreshMeshInfo, 1500);
+
 // ── Vault UI (credentials + env vars) ───────────────────
 const vaultCredName = document.getElementById('vaultCredName');
 const vaultCredUrl = document.getElementById('vaultCredUrl');

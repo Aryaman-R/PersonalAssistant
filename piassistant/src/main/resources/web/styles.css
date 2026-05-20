@@ -2914,6 +2914,18 @@ body {
 .vault-row-actions { display: flex; gap: 6px; }
 .vault-row-actions .timer-btn { padding: 4px 10px; font-size: 11px; }
 
+/* ── Mesh peer list (STRETCH §9) ─────────────────────── */
+.mesh-peer-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.mesh-peer-row {
+    display: grid; grid-template-columns: 1.4fr 2fr auto; align-items: center; gap: 12px;
+    padding: 8px 10px; background: var(--bg-item);
+    border: 1px solid var(--border-dark); border-radius: 6px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+}
+.mesh-peer-id { color: var(--accent-green); font-weight: 600; }
+.mesh-peer-url { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mesh-peer-meta { color: var(--text-secondary); font-size: 11px; }
+
 /* ── Devices list ────────────────────────────────────── */
 .devices-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .device-row {

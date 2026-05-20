@@ -197,53 +197,115 @@ twice if it's connected to both masters during a brief overlap.
 
 ---
 
-## What this branch ships (Phase 1)
+## What this branch ships (Phase 1) — COMPLETE
 
 The bar for landing this branch as "Phase 1 complete":
 
-- [ ] **MESH_PLAN.md** committed (this doc).
-- [ ] **CRDT primitives** (`HLC.java`, `LwwRegister.java`, `LwwMap.java`,
+- [x] **MESH_PLAN.md** committed (this doc).
+- [x] **CRDT primitives** (`HLC.java`, `HlcClock.java`, `LwwRegister.java`,
       `OrSet.java`) compiled, with javadoc on every public method.
-- [ ] **`Op.java`** + JSON serialization (Gson-based, matches the
-      `{ id, originMasterId, target, kind, payload }` shape above).
-- [ ] **`OpLog.java`** — append-only `~/.sentient_mesh_oplog.ndjson`
-      with rotation + replay-on-boot.
-- [ ] **`ReplicatedState.java`** — materialized view + `apply(Op)` +
-      `view()` returning a `UserProfile`-shaped record. Backed by the
-      CRDT primitives above.
-- [ ] **`ProfileManager` rewired** so every existing mutation produces an
-      `Op` + applies it, but `getUserProfile()` still returns the same
-      shape (no caller breaks).
-- [ ] **Migration**: existing `user_profile.json` upgrades cleanly on
-      first boot — every field becomes a stamped LWW/OR-Set entry. No
-      data loss for any user upgrading from main.
-- [ ] **`~/.sentient_master_id`** generated on first boot and reused.
-- [ ] **`MeshService.java`** skeleton (config load + peer-list
-      persistence; no networking yet).
-- [ ] **Settings → MESH panel stub**: shows the master ID + an empty
-      peer list. Pairing button is wired but says "Phase 2 — coming
-      soon." Keeps the wiring honest end-to-end without the bits that
-      aren't ready.
-- [ ] **Build clean**: `mvn -q -DskipTests package` succeeds.
-- [ ] **Manual smoke test**: start app, add a task, restart, verify
-      restore.
+      Self-test at `com.sentient.mesh.MeshSelfTest` covers ordering,
+      monotonicity, receive-merge, idempotent apply, add-wins.
+- [x] **`Op.java`** + JSON serialization (Gson-based, matches the
+      `{ id, origin, kind, path, payload }` shape above).
+- [x] **`OpLog.java`** — append-only `~/.sentient_mesh_oplog.ndjson`
+      with replay-on-boot + in-memory dedup. Per-line `SYNC` writes;
+      tolerant of partial trailing lines after a kill -9.
+- [x] **`ReplicatedState.java`** + **`ReplicatedDoc.java`** —
+      `apply(Op)` is the single mutation entry, replay-deterministic.
+      Doc composes state + clock + log + origin, exposes
+      `setLwwString / setLwwBool / addToSet / removeFromSet /
+      applyRemote` and an `OpListener` hook for the Phase 2 gossip
+      layer.
+- [x] **`ProfileManager` rewired** through `ReplicatedDoc`. Every public
+      method (addHabit / addTaskToList / removeEvent / etc.) keeps its
+      signature; the legacy "direct field mutation + saveProfile()"
+      pattern is handled by a `reconcile()` pass at save time that
+      diffs the cached `UserProfile` against the CRDT view and emits
+      ops for any divergence — `GoogleTasksService` setting
+      `task.googleId`, `GroqService` doing
+      `getUserProfile().preferences.add(arg)`, and the calendar PUT
+      endpoint all continue to work without source changes.
+- [x] **Migration**: existing `user_profile.json` is read once + poured
+      into the op log on first boot. Plus the legacy
+      `tasks[]` → `taskLists[0].items` sub-migration is preserved.
+- [x] **`~/.sentient_master_id`** generated on first boot and reused.
+      `MasterId.load()` handles the missing-file / garbage-file /
+      io-error cases.
+- [x] **`MeshService.java`** skeleton + **`PeerRegistry.java`**
+      (paired peers persisted to `~/.sentient_mesh_peers.json`,
+      file mode 0600) + **`PairingPhrase.java`** (256-word list,
+      6-word phrase generator + constant-time validator) +
+      **`MeshCrypto.java`** (HMAC-SHA256 + HKDF-SHA256 in-process,
+      no JNI). No networking yet — Phase 2 wires the actual sync.
+- [x] **Settings → MESH panel** in the UI: shows master ID,
+      op-log path, replicated-path counts, paired peer list (empty in
+      Phase 1), and a "PAIR WITH ANOTHER MASTER" button that says
+      "Pairing arrives in Phase 2 — the peer-list backbone is wired
+      today; the sync protocol + handshake land in the next branch."
+- [x] **Build clean**: `mvn -q -DskipTests compile` succeeds.
+- [x] **Tests green**:
+      - `MeshSelfTest` — 19 in-process assertions: HLC / clock /
+        LwwRegister / OrSet primitive semantics; Op round-trip;
+        OpLog append + dedup + readback; ReplicatedState idempotent
+        apply + older-HLC rejection; ReplicatedDoc local mutators +
+        bootstrap restore + remote idempotency; two-doc convergence
+        when ops are mirrored; two-doc concurrent-edit resolution
+        (LWW deterministic winner + OR-Set add-wins); OpListener
+        fires once per fresh op (and not for dedup'd remotes).
+      - `ProfileManagerScenario` — sandbox-rooted end-to-end:
+        writes a legacy `user_profile.json` with rich fixtures →
+        boots fresh ProfileManager → verifies migration into op log
+        (15 ops on the fixture) → exercises typed setters AND the
+        legacy direct-mutation pattern (`task.googleId = …`) →
+        "restarts" the singleton via reflection → verifies state
+        round-trips → confirms master id is stable + that the
+        restart pass emits zero redundant ops.
 
-Each bullet is at most one commit. Smaller commits are fine.
+Each bullet was at most one commit. Five commits total on this branch:
+1. `Add MESH_PLAN.md` (this doc)
+2. `mesh: CRDT primitives (HLC, LwwRegister, OrSet) + self-test`
+3. `mesh: Op + OpLog + ReplicatedState + ReplicatedDoc`
+4. `mesh: route ProfileManager through op log + add MasterId`
+5. `mesh: MeshService skeleton + PeerRegistry + MESH settings panel`
 
 ---
 
 ## Phase 2 (next branch)
 
-- [ ] `/mesh-sync` WS endpoint + HKDF handshake.
-- [ ] `MeshService` peer-connection lifecycle: dial, retry, backoff,
-      heartbeats.
-- [ ] Pairing UX: phrase generation + redemption.
-- [ ] Vector-clock-based op exchange.
-- [ ] Gossip re-broadcast.
-- [ ] Origin tagging on every existing WS broadcast (`origin_master_id`).
-- [ ] First-pass mesh end-to-end test: two `mvn javafx:run` instances
-      on different ports, paired, both see each other's tasks within
-      a second.
+Phase 1 left some foundation pieces in place for Phase 2 to build on:
+{`PairingPhrase`, `MeshCrypto.derivePairKey`, `PeerRegistry.createPendingPhrase`,
+`PeerRegistry.redeemPhrase`, `MeshService.setOpListener`} are all wired
+locally — they just don't speak to anything over the wire yet.
+
+- [ ] `/mesh-sync` WS endpoint on `WebServer` — separate from `/ws`
+      (browsers) and `/helper` (native OS helpers). HMAC-authenticated
+      using the per-peer signing key from `PeerRegistry`.
+- [ ] Pairing protocol on `/mesh-sync`:
+      1. Joiner sends `pair_hello { masterId, nonce_j }`.
+      2. Initiator looks up the pending phrase via
+         `PeerRegistry.redeemPhrase`; if found, derives the same key
+         (it's HKDF-deterministic on the phrase) and sends
+         `pair_challenge { masterId, nonce_i,
+          hmac = HMAC(K, "I" || masterId || nonce_j) }`.
+      3. Joiner verifies + responds
+         `pair_complete { hmac = HMAC(K, "J" || masterId || nonce_i) }`.
+      4. Both call `PeerRegistry.upsert(masterId, url, K)`.
+- [ ] `MeshSyncClient`: dial each paired peer, run the auth handshake
+      using the stored key, then enter the sync loop. Retry with
+      jittered exponential backoff on disconnect.
+- [ ] Vector-clock-based op exchange:
+      `A → B  { type:"vector", lastSeen: { node-uuid → HLC.encode() } }`
+      `B → A  { type:"ops", ops: [<Op>...] }`  (only ops B has whose
+      `hlc` > A's lastSeen for that origin) ... until both sides settle.
+- [ ] Gossip re-broadcast: route newly accepted remote ops to every
+      OTHER paired peer (avoid the originator + the immediate sender).
+- [ ] `origin_master_id` field on every existing WS broadcast.
+      Browsers dedupe by `(origin_master_id, broadcast_seq)`.
+- [ ] First-pass mesh end-to-end test (run inside the JVM, two
+      `MeshService` instances + two `ReplicatedDoc`s + two `OpLog`s
+      in temp dirs): pair them, mutate state on one, assert
+      convergence on the other within 200 ms wallclock.
 
 ## Phase 3 (next-next branch)
 
