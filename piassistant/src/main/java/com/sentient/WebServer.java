@@ -11,6 +11,7 @@ import com.sentient.service.GroqService;
 import com.sentient.service.Listener;
 import com.sentient.service.OpenClawConfigManager;
 import com.sentient.service.OpenClawService;
+import com.sentient.service.SetupService;
 import com.sentient.service.SpotifyService;
 import com.sentient.service.TailscaleService;
 import com.sentient.service.TextToSpeech;
@@ -50,6 +51,7 @@ public class WebServer {
     private final TailscaleService tailscale;
     private final AuthService auth;
     private final CredentialVault vault;
+    private final SetupService setup;
     private Listener listener;
 
     // Active WebSocket clients
@@ -82,6 +84,7 @@ public class WebServer {
         this.tailscale = new TailscaleService();
         this.auth = new AuthService();
         this.vault = new CredentialVault();
+        this.setup = new SetupService(this.openClawConfig);
 
         this.app = Javalin.create(config -> {
             config.staticFiles.add("/web", Location.CLASSPATH);
@@ -518,6 +521,51 @@ public class WebServer {
                 return;
             }
         }
+    }
+
+    // ── Setup-wizard progress streaming ─────────────────
+
+    private String startSetupJob(String phase) {
+        String id = phase + "-" + System.currentTimeMillis();
+        JsonObject msg = new JsonObject();
+        msg.addProperty("type", "setup_progress");
+        msg.addProperty("jobId", id);
+        msg.addProperty("phase", phase);
+        msg.addProperty("level", "info");
+        msg.addProperty("line", "Starting…");
+        broadcast(msg);
+        return id;
+    }
+
+    /**
+     * Build a {@link SetupService.ProgressSink} that forwards every line over
+     * the existing WS broadcast as a {@code setup_progress} message.
+     */
+    private SetupService.ProgressSink setupProgressSink(String jobId) {
+        return new SetupService.ProgressSink() {
+            @Override
+            public void emit(String phase, String level, String line) {
+                JsonObject msg = new JsonObject();
+                msg.addProperty("type", "setup_progress");
+                msg.addProperty("jobId", jobId);
+                msg.addProperty("phase", phase);
+                msg.addProperty("level", level);
+                msg.addProperty("line", line);
+                broadcast(msg);
+            }
+            @Override
+            public void done(String phase, boolean success, String summary) {
+                JsonObject msg = new JsonObject();
+                msg.addProperty("type", "setup_progress");
+                msg.addProperty("jobId", jobId);
+                msg.addProperty("phase", phase);
+                msg.addProperty("level", success ? "ok" : "err");
+                msg.addProperty("done", true);
+                msg.addProperty("success", success);
+                msg.addProperty("line", summary);
+                broadcast(msg);
+            }
+        };
     }
 
     private void broadcastVaultUpdated() {
@@ -1838,6 +1886,107 @@ public class WebServer {
             if (!targetSession.isEmpty()) sendToSession(targetSession, msg);
             else broadcast(msg);
             ctx.status(200).result("{\"success\":true}");
+        });
+
+        // ── Setup Wizard Endpoints ─────────────────────────────
+        // First-run state snapshot — the UI uses this to decide whether to
+        // auto-show the wizard.
+        app.get("/api/setup/state", ctx -> {
+            JsonObject s = setup.state();
+            s.addProperty("authRequired", auth.isAuthRequired());
+            ctx.result(s.toString());
+            ctx.contentType("application/json");
+        });
+
+        // Probe every prerequisite at once. Cheap — used to gate "next step" in
+        // the wizard.
+        app.get("/api/setup/prereqs", ctx -> {
+            ctx.result(setup.prereqs().toString());
+            ctx.contentType("application/json");
+        });
+
+        // Read .env status (whether each whitelisted key is set). Never returns values.
+        app.get("/api/setup/env", ctx -> {
+            ctx.result(setup.envStatus().toString());
+            ctx.contentType("application/json");
+        });
+
+        // Write a single whitelisted .env key.
+        app.post("/api/setup/env", ctx -> {
+            JsonObject body = gson.fromJson(ctx.body(), JsonObject.class);
+            String name = getStr(body, "name", "").trim();
+            String value = getStr(body, "value", "");
+            if (name.isEmpty()) {
+                ctx.status(400).result("{\"error\":\"'name' required\"}");
+                return;
+            }
+            try {
+                if (value.isEmpty()) setup.removeEnvValue(name);
+                else setup.setEnvValue(name, value);
+            } catch (IllegalArgumentException e) {
+                ctx.status(400).result("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
+                return;
+            } catch (Exception e) {
+                ctx.status(500).result("{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
+                return;
+            }
+            ctx.result("{\"success\":true}");
+            ctx.contentType("application/json");
+        });
+
+        // Install OpenClaw. Streams progress over WS.
+        app.post("/api/setup/install/openclaw", ctx -> {
+            String jobId = startSetupJob("openclaw");
+            setup.installOpenClaw(setupProgressSink(jobId));
+            ctx.result("{\"success\":true,\"jobId\":\"" + jobId + "\"}");
+            ctx.contentType("application/json");
+        });
+
+        // Start the OpenClaw gateway daemon.
+        app.post("/api/setup/install/openclaw/start", ctx -> {
+            String jobId = startSetupJob("openclaw_gateway");
+            setup.startOpenClawGateway(setupProgressSink(jobId));
+            ctx.result("{\"success\":true,\"jobId\":\"" + jobId + "\"}");
+            ctx.contentType("application/json");
+        });
+
+        // Install Tailscale (Linux/macOS).
+        app.post("/api/setup/install/tailscale", ctx -> {
+            String jobId = startSetupJob("tailscale");
+            setup.installTailscale(setupProgressSink(jobId));
+            ctx.result("{\"success\":true,\"jobId\":\"" + jobId + "\"}");
+            ctx.contentType("application/json");
+        });
+
+        // Run `tailscale up` to log in.
+        app.post("/api/setup/install/tailscale/up", ctx -> {
+            String jobId = startSetupJob("tailscale_up");
+            setup.tailscaleUp(setupProgressSink(jobId));
+            ctx.result("{\"success\":true,\"jobId\":\"" + jobId + "\"}");
+            ctx.contentType("application/json");
+        });
+
+        // Download the Vosk wake-word model.
+        app.post("/api/setup/install/vosk", ctx -> {
+            String jobId = startSetupJob("vosk");
+            setup.downloadVoskModel(setupProgressSink(jobId));
+            ctx.result("{\"success\":true,\"jobId\":\"" + jobId + "\"}");
+            ctx.contentType("application/json");
+        });
+
+        // Build + install the native helper for this OS.
+        app.post("/api/setup/install/helper", ctx -> {
+            String jobId = startSetupJob("helper");
+            setup.installHelper(setupProgressSink(jobId));
+            ctx.result("{\"success\":true,\"jobId\":\"" + jobId + "\"}");
+            ctx.contentType("application/json");
+        });
+
+        // Mark setup complete — the wizard won't auto-show again.
+        app.post("/api/setup/finish", ctx -> {
+            setup.markComplete();
+            ctx.result("{\"success\":true}");
+            ctx.contentType("application/json");
         });
 
         // ── Tailscale (Funnel) Endpoints ───────────────────────

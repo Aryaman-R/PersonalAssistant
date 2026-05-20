@@ -270,6 +270,47 @@ Branches on the chosen host mode:
 - The setup-state endpoint returns *whether* keys are present, never their
   values.
 
+## 6.5 Wake-word alternatives (follow-up evaluation)
+
+The wizard ships Vosk because it's already integrated. Two alternatives worth
+considering for a future iteration:
+
+### Picovoice Porcupine
+- **Pros**: 97%+ accuracy with very low false-positive rates, ~50 KB models,
+  instant custom wake words via web tool, ready React-Native / Java / Python
+  SDKs, very low CPU.
+- **Cons**: AGPL or per-seat commercial license. Free tier is for personal
+  use and prototypes only — shipping it inside an open-source assistant the
+  user runs themselves is fine for personal builds, but cannot be redistributed
+  as a hosted service without a commercial agreement.
+- **Verdict**: best fit if the project stays personal-use, since it's the
+  best-of-class accuracy at the lowest cost. Custom wake words ("Sentient")
+  would be trivial.
+
+### OpenWakeWord
+- **Pros**: Apache 2.0 license, ONNX models, no API key, runs on CPU
+  (5–6× lower CPU on Pi than Vosk). Pre-trained models for common keywords
+  like "hey jarvis" and "alexa". Pip-installable for Python; ONNX models can
+  also be run via the `onnxruntime` Java package — which we already depend on
+  for Piper TTS.
+- **Cons**: Pre-trained custom keywords (like "Sentient") require training
+  your own model with at least a few hours of data, or paying the maintainer.
+  Default models are a bit less accurate than Porcupine in noisy conditions.
+- **Verdict**: best fit for an open-source distribution. Since we already
+  bundle `onnxruntime`, swapping the JNI Vosk bridge for an ONNX `MelSpec →
+  embedding → keyword` pipeline is plausible. Estimated effort: ~2–3 days,
+  most of it in audio buffering + the keyword classifier inference.
+
+### Decision
+
+Defer the swap. Vosk works, the licensing is unambiguous (Apache 2.0), and the
+Setup Wizard reduces the friction of the existing setup (one-click model
+download). Re-evaluate when (a) a user complains about wake-word false fires,
+or (b) we add a "custom wake word" feature.
+
+If we do swap, the wizard step `voice` doesn't need any change — it'd just
+download a different model on click.
+
 ## 7. Out of scope (for this branch)
 
 - Native installers (.dmg / .exe / .deb). The one-line script is good enough,

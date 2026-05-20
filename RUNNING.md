@@ -4,9 +4,16 @@ The full, end-to-end guide: zero-to-working master, plus client browsers, option
 remote-access, optional OpenClaw + Composio, and the new Phase 3 features
 (VIEW_DEVICE, live mirror, native macOS helper).
 
+> **TL;DR for new users:** run the one-line installer from
+> [`README.md`](README.md#one-line-installer-recommended-for-non-technical-users),
+> then follow the in-UI wizard. This document covers the manual path and every
+> opt-in step the wizard hides for clarity.
+
 If you only want the 30-second story, read [`README.md`](README.md). For
 provider-level OpenClaw / Composio detail, read [`SETUP_OPENCLAW.md`](SETUP_OPENCLAW.md).
 For the master/client architecture, read [`ARCHITECTURE.md`](ARCHITECTURE.md).
+For the in-UI wizard's design + endpoint list, read
+[`SETUP_WIZARD.md`](SETUP_WIZARD.md).
 
 ---
 

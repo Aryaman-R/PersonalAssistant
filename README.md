@@ -37,20 +37,40 @@ A personal AI assistant that runs on one device and is reachable from every scre
 
 ## Quick start
 
+### One-line installer (recommended for non-technical users)
+
+**macOS / Linux**
+
 ```bash
-# Clone
-git clone https://github.com/<you>/RaspberryPi-Home-Assistant.git
-cd RaspberryPi-Home-Assistant
+curl --proto '=https' --tlsv1.2 -fsSL \
+    https://raw.githubusercontent.com/Aryaman-R/SentientAssistant/main/install.sh | bash
+```
 
-# Configure
-cp .env.example .env
-$EDITOR .env           # fill in GROQ_API_KEY, SPOTIFY_*, GOOGLE_*
+**Windows (PowerShell)**
 
-# Build
-cd piassistant
-mvn package            # produces target/sentient-assistant-1.0-SNAPSHOT.jar
+```powershell
+iwr -useb https://raw.githubusercontent.com/Aryaman-R/SentientAssistant/main/install.ps1 | iex
+```
 
-# Run
+The installer:
+1. Installs Java 21 and Maven if missing (via your platform's package manager).
+2. Clones the repo into `~/SentientAssistant` (or wherever you `cd`'d to).
+3. Builds the fat jar.
+4. Launches the server in the background and opens your browser to
+   **`http://localhost:7070`**.
+
+On first launch the **in-UI setup wizard** opens automatically and walks you
+through the rest — installing OpenClaw (or picking Groq), setting a password,
+saving API keys, connecting Spotify / Google / Composio, optionally enabling
+Tailscale remote access and the wake-word voice mode.
+
+If you'd rather hand-roll it, the full manual setup is in
+[`RUNNING.md`](RUNNING.md). The wizard re-runs from `Settings → SETUP WIZARD`.
+
+### Manual quick-start (existing checkout)
+
+```bash
+cd piassistant && mvn -DskipTests package
 java -jar target/sentient-assistant-1.0-SNAPSHOT.jar
 ```
 

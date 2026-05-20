@@ -405,6 +405,19 @@
                 <button class="panel-close" data-panel="settings">✕</button>
             </div>
             <div class="settings-content">
+                <!-- ── Setup wizard re-run (always available) ─────── -->
+                <div class="settings-group" id="settingsWizard">
+                    <div class="panel-sub-header">SETUP WIZARD</div>
+                    <div class="setting-hint">
+                        Walks you through every install / config step the assistant needs — installing
+                        OpenClaw, downloading the voice model, setting a password, connecting integrations,
+                        enabling remote access. Safe to re-run any time; it skips things you've already done.
+                    </div>
+                    <div class="settings-actions">
+                        <button class="timer-btn play-btn" id="settingsRunWizardBtn">▶ RE-RUN SETUP WIZARD</button>
+                    </div>
+                </div>
+
                 <div class="settings-group">
                     <div class="panel-sub-header">AI & CHAT</div>
                     <label class="setting-item">
@@ -702,9 +715,38 @@
         </section>
     </main>
 
+    <!-- ─── Setup Wizard (first-run onboarding) ─────────── -->
+    <!-- Hidden by default. Shown by JS when `/api/setup/state` says firstRun, or
+         when the user clicks Settings → SETUP WIZARD → RE-RUN. -->
+    <div class="setup-overlay" id="setupWizard" style="display:none" role="dialog" aria-modal="true"
+        aria-labelledby="setupTitle">
+        <div class="setup-card">
+            <!-- Top bar: progress + skip -->
+            <div class="setup-topbar">
+                <div class="setup-brand">SENTIENT · SETUP</div>
+                <div class="setup-progress">
+                    <div class="setup-progress-fill" id="setupProgressFill"></div>
+                </div>
+                <button class="setup-skip-link" id="setupSkipAllBtn"
+                    title="Close the wizard. You can re-open it from Settings.">SKIP FOR NOW</button>
+            </div>
+
+            <!-- Step body — JS replaces innerHTML per step -->
+            <div class="setup-body" id="setupBody"></div>
+
+            <!-- Bottom bar: back + next -->
+            <div class="setup-footer">
+                <button class="setup-btn setup-btn-ghost" id="setupBackBtn">◂ BACK</button>
+                <div class="setup-step-label" id="setupStepLabel"></div>
+                <button class="setup-btn setup-btn-primary" id="setupNextBtn">NEXT ▸</button>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script src="app.js"></script>
+    <script src="setup-wizard.js"></script>
 </body>
 
 </html>
