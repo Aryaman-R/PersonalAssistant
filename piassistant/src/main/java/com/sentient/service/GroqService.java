@@ -65,8 +65,18 @@ public class GroqService {
     }
 
     public CompletableFuture<String> processCommand(String userPrompt, String modelOverride, String imageBase64, String fileName, String fileType) {
+        return processCommand(userPrompt, modelOverride, imageBase64, fileName, fileType, null);
+    }
+
+    /**
+     * Variant accepting a memory block (typically from
+     * {@code MemoryService.buildPromptBlock}). It's appended to whichever system
+     * prompt this turn ends up using — CHAT, THINK, or VISION. Null/blank means
+     * the prompt is unchanged.
+     */
+    public CompletableFuture<String> processCommand(String userPrompt, String modelOverride, String imageBase64, String fileName, String fileType, String memoryBlock) {
         return CompletableFuture.supplyAsync(() -> {
-            
+
             String finalPrompt = userPrompt;
             String finalImageBase64 = imageBase64;
             
@@ -114,6 +124,7 @@ public class GroqService {
             if (routeDecision.equals("VISION")) {
                 System.out.println("--> Router selected: VISION MODEL (meta-llama/llama-4-scout-17b-16e-instruct)");
                 String systemPrompt = "You are a helpful AI assistant analyzing an image provided by the user. State clearly what you see and answer their question concisely.";
+                systemPrompt = appendMemory(systemPrompt, memoryBlock);
                 return callGroqApi("meta-llama/llama-4-scout-17b-16e-instruct", finalPrompt, finalImageBase64, null, systemPrompt);
             } else if (routeDecision.contains("THINK")) {
                 System.out.println("--> Router selected: THE THINKER (Qwen 3 32B)");
@@ -126,6 +137,7 @@ public class GroqService {
                         "Be thorough but organized — use structure (numbered steps, bullet points) when it helps. " +
                         "Speak naturally since your response will be read aloud by TTS.";
 
+                systemPrompt = appendMemory(systemPrompt, memoryBlock);
                 return callGroqApi(THINK_MODEL, finalPrompt, null, null, systemPrompt);
             } else {
                 System.out.println("--> Router selected: THE CONVERSATIONALIST (Llama 3.3 70B)");
@@ -159,6 +171,7 @@ public class GroqService {
                         "- [CMD:SWITCH_HOME] — Switch to Home screen\n" +
                         "- [CMD:SWITCH_SLEEP] — Switch to Sleep screen\n" +
                         "- [CMD:SWITCH_TASKS] — Switch to Tasks screen\n" +
+                        "- [CMD:SWITCH_MEMORY] — Switch to Memory screen\n" +
                         "- [CMD:SET_TIMER:N] — Set focus timer to N minutes\n" +
                         "- [CMD:START_TIMER] / [CMD:PAUSE_TIMER] / [CMD:CANCEL_TIMER] — Timer controls\n" +
                         "- [CMD:SET_USERNAME:name] — Change display name\n" +
@@ -172,6 +185,9 @@ public class GroqService {
                         "- [CMD:ADD_COMMITMENT:description] — Add a commitment (e.g. [CMD:ADD_COMMITMENT:Gym at 6pm])\n"
                         +
                         "- [CMD:REMOVE_COMMITMENT:description] — Remove a commitment\n" +
+                        "— Memory:\n" +
+                        "- [CMD:FORGET:topic] — Drop every stored memory whose content mentions the given topic. " +
+                        "Use this only when the user explicitly asks to forget something (e.g. 'forget what I said about X').\n" +
                         "— Calendar:\n" +
                         "- [CMD:SWITCH_CALENDAR] — Switch to Calendar screen\n" +
                         "- [CMD:ADD_EVENT:title|description|YYYY-MM-DDTHH:MM|YYYY-MM-DDTHH:MM] — Add a calendar event with start and end times (e.g. [CMD:ADD_EVENT:Team Meeting|Weekly standup|2026-03-25T10:00|2026-03-25T11:00])\n"
@@ -227,6 +243,7 @@ public class GroqService {
                         "User: 'How are you doing?' → friendly text + [CMD:CONTINUE_CONVERSATION]\n" +
                         "Only use commands when the user's intent clearly matches. For normal conversation, include CONTINUE_CONVERSATION if you think the user wants to keep chatting.";
 
+                systemPrompt = appendMemory(systemPrompt, memoryBlock);
                 String response = callGroqApi(CHAT_MODEL, finalPrompt, null, conversationHistory, systemPrompt);
 
                 // Only store history when the response is a genuine AI reply (not a service
@@ -255,6 +272,11 @@ public class GroqService {
                 return response;
             }
         });
+    }
+
+    private static String appendMemory(String systemPrompt, String memoryBlock) {
+        if (memoryBlock == null || memoryBlock.isBlank()) return systemPrompt;
+        return systemPrompt + "\n\n" + memoryBlock;
     }
 
     private String getRoute(String userPrompt) {

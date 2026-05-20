@@ -2201,6 +2201,127 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════
+   MEMORY Panel (episodic memory)
+   ═══════════════════════════════════════════════════ */
+
+.memory-accent {
+    background: #c084fc;
+}
+
+.memory-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px 20px;
+}
+
+.memory-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.memory-search {
+    flex: 1;
+    min-width: 200px;
+}
+
+.memory-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+}
+
+.memory-add-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.memory-add-input {
+    flex: 1;
+}
+
+.memory-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    background: rgba(192, 132, 252, 0.05);
+    border-left: 2px solid #c084fc;
+    border-radius: 4px;
+}
+
+.memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.memory-row {
+    padding: 10px 12px;
+    background: var(--bg-soft, #161616);
+    border: 1px solid var(--border-dark, #27272a);
+    border-radius: 6px;
+    display: grid;
+    grid-template-columns: 90px 70px 1fr auto;
+    gap: 12px;
+    align-items: start;
+    font-size: 13px;
+}
+
+.memory-row .mem-age {
+    color: var(--text-muted);
+    font-size: 11px;
+    letter-spacing: 0.5px;
+}
+
+.memory-row .mem-role {
+    font-size: 11px;
+    letter-spacing: 1px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(192, 132, 252, 0.12);
+    color: #c084fc;
+    text-align: center;
+    align-self: start;
+}
+
+.memory-row .mem-role.role-user { background: rgba(74, 222, 128, 0.1); color: #4ade80; }
+.memory-row .mem-role.role-assistant { background: rgba(96, 165, 250, 0.1); color: #60a5fa; }
+.memory-row .mem-role.role-fact { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+
+.memory-row .mem-content {
+    color: var(--text-primary, #e5e7eb);
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.memory-row .mem-delete {
+    background: transparent;
+    color: var(--accent-red, #f87171);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+}
+
+.memory-row .mem-delete:hover {
+    background: rgba(248, 113, 113, 0.1);
+}
+
+.memory-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 32px;
+    font-size: 13px;
+}
+
+/* ═══════════════════════════════════════════════════
    SETTINGS Panel & File Uploads
    ═══════════════════════════════════════════════════ */
 

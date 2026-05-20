@@ -10,6 +10,7 @@ import com.sentient.service.GoogleCalendarService;
 import com.sentient.service.GroqService;
 import com.sentient.service.Listener;
 import com.sentient.service.LocalLlmService;
+import com.sentient.service.MemoryService;
 import com.sentient.service.OpenClawConfigManager;
 import com.sentient.service.OpenClawService;
 import com.sentient.service.SetupService;
@@ -45,6 +46,7 @@ public class WebServer {
     private final GroqService groq;
     private final OpenClawService openClaw;
     private final LocalLlmService localLlm;
+    private final MemoryService memory;
     private final OpenClawConfigManager openClawConfig;
     private final SpotifyService spotify;
     private final AutomationService automation;
@@ -78,6 +80,7 @@ public class WebServer {
         this.groq = new GroqService();
         this.openClaw = new OpenClawService();
         this.localLlm = new LocalLlmService();
+        this.memory = new MemoryService();
         this.openClawConfig = new OpenClawConfigManager();
         hydrateOpenClawFromConfig();
         this.spotify = new SpotifyService();
@@ -609,35 +612,51 @@ public class WebServer {
             }
         }
 
+        // Build the memory hint for this turn — top-k relevant past memories,
+        // formatted as a markdown block ready to drop into a system prompt.
+        // Empty when nothing scores high enough, so injection is a no-op.
+        String memoryBlock = memory.buildPromptBlock(text, 5);
+
         if ("local".equals(chosen)) {
             if (localLlm.isUp()) {
-                future = localLlm.processCommand(text, modelOverride, imageBase64, fileName, fileType);
+                future = localLlm.processCommand(text, modelOverride, imageBase64, fileName, fileType, memoryBlock);
             } else {
                 System.err.println("[WebServer] Local LLM selected but server unreachable — falling back to Groq.");
                 JsonObject warn = new JsonObject();
                 warn.addProperty("type", "system");
                 warn.addProperty("text", "Local LLM is offline — using Groq for this turn.");
                 broadcast(warn);
-                future = groq.processCommand(text, modelOverride, imageBase64, fileName, fileType);
+                future = groq.processCommand(text, modelOverride, imageBase64, fileName, fileType, memoryBlock);
             }
         } else if ("openclaw".equals(chosen)) {
             if (openClaw.isGatewayUp()) {
-                future = openClaw.processCommand(text, modelOverride, imageBase64, fileName, fileType);
+                future = openClaw.processCommand(text, modelOverride, imageBase64, fileName, fileType, memoryBlock);
             } else {
                 System.err.println("[WebServer] OpenClaw selected but gateway unreachable — falling back to Groq.");
                 JsonObject warn = new JsonObject();
                 warn.addProperty("type", "system");
                 warn.addProperty("text", "OpenClaw gateway is offline — using Groq for this turn.");
                 broadcast(warn);
-                future = groq.processCommand(text, modelOverride, imageBase64, fileName, fileType);
+                future = groq.processCommand(text, modelOverride, imageBase64, fileName, fileType, memoryBlock);
             }
         } else {
-            future = groq.processCommand(text, modelOverride, imageBase64, fileName, fileType);
+            future = groq.processCommand(text, modelOverride, imageBase64, fileName, fileType, memoryBlock);
         }
+        // Capture the user's message as a memory before we hear back. Even if the LLM
+        // call fails, we still want the user side recorded — that's the part that
+        // matters for "remember what I said an hour ago".
+        final String engineLabel = chosen;
+        memory.remember("chat", "user", text, "engine:" + engineLabel);
+
         future.thenAccept(response -> {
             List<String[]> commands = extractCommands(response);
             String cleanResponse = CMD_PATTERN.matcher(response).replaceAll("").trim()
                     .replaceAll("\\s{2,}", " ").trim();
+
+            // Capture the assistant turn too, so retrieval can surface both sides.
+            if (!cleanResponse.isEmpty()) {
+                memory.remember("chat", "assistant", cleanResponse, "engine:" + engineLabel);
+            }
 
             // Check if AI wants to continue conversation
             boolean shouldContinue = commands.stream()
@@ -795,6 +814,20 @@ public class WebServer {
                         autofill.addProperty("password", snap.get("password").getAsString());
                         broadcast(autofill);
                     }
+                    continue;
+                }
+
+                // Handle FORGET server-side — drop matching memories from the store.
+                // The LLM should emit this when the user says "forget about X".
+                if ("FORGET".equals(cmd[0]) && cmd[1] != null) {
+                    String topic = cmd[1].trim();
+                    int n = memory.forgetByTopic(topic);
+                    JsonObject cmdMsg = new JsonObject();
+                    cmdMsg.addProperty("type", "command");
+                    cmdMsg.addProperty("action", "FORGET");
+                    cmdMsg.addProperty("param", topic);
+                    cmdMsg.addProperty("count", n);
+                    broadcast(cmdMsg);
                     continue;
                 }
 
@@ -1901,6 +1934,90 @@ public class WebServer {
                 result.addProperty("reply", reply);
             }
             ctx.result(result.toString());
+            ctx.contentType("application/json");
+        });
+
+        // ── Episodic memory (§6) ───────────────────────────
+        // Store at ~/.sentient_memories.ndjson, retrieved per-turn and injected
+        // into the system prompt as a "## Relevant memories" block.
+        app.get("/api/memory", ctx -> {
+            String q = ctx.queryParam("q");
+            int limit = 200;
+            try {
+                String l = ctx.queryParam("limit");
+                if (l != null && !l.isBlank()) limit = Math.min(1000, Math.max(1, Integer.parseInt(l)));
+            } catch (NumberFormatException ignored) {}
+            com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+            java.util.List<MemoryService.Entry> entries = (q != null && !q.isBlank())
+                    ? memory.recall(q, limit)
+                    : memory.all();
+            int n = 0;
+            for (MemoryService.Entry e : entries) {
+                if (n++ >= limit) break;
+                arr.add(memory.toJson(e));
+            }
+            JsonObject out = new JsonObject();
+            out.add("entries", arr);
+            out.addProperty("total", memory.size());
+            ctx.result(out.toString());
+            ctx.contentType("application/json");
+        });
+
+        // Save a manually-asserted fact.
+        app.post("/api/memory", ctx -> {
+            JsonObject body = ctx.body() == null || ctx.body().isBlank()
+                    ? new JsonObject() : gson.fromJson(ctx.body(), JsonObject.class);
+            String content = getStr(body, "content", "").trim();
+            if (content.isEmpty()) {
+                ctx.status(400).result("{\"error\":\"'content' required\"}");
+                return;
+            }
+            String namespace = getStr(body, "namespace", "fact");
+            String role = getStr(body, "role", "fact");
+            String source = getStr(body, "source", "manual");
+            MemoryService.Entry e = memory.remember(namespace, role, content, source);
+            JsonObject out = new JsonObject();
+            out.addProperty("success", e != null);
+            if (e != null) out.add("entry", memory.toJson(e));
+            ctx.result(out.toString());
+            ctx.contentType("application/json");
+        });
+
+        // Delete a single memory by id.
+        app.delete("/api/memory/{id}", ctx -> {
+            boolean removed = memory.forgetById(ctx.pathParam("id"));
+            JsonObject out = new JsonObject();
+            out.addProperty("removed", removed);
+            ctx.result(out.toString());
+            ctx.contentType("application/json");
+        });
+
+        // Forget every memory whose content matches a topic substring.
+        app.post("/api/memory/forget", ctx -> {
+            JsonObject body = ctx.body() == null || ctx.body().isBlank()
+                    ? new JsonObject() : gson.fromJson(ctx.body(), JsonObject.class);
+            String topic = getStr(body, "topic", "").trim();
+            int n = memory.forgetByTopic(topic);
+            JsonObject out = new JsonObject();
+            out.addProperty("count", n);
+            ctx.result(out.toString());
+            ctx.contentType("application/json");
+        });
+
+        // Nuke everything.
+        app.post("/api/memory/purge", ctx -> {
+            memory.purgeAll();
+            ctx.result("{\"success\":true}");
+            ctx.contentType("application/json");
+        });
+
+        // Preview the block that would be injected for a given query. Useful for
+        // debugging "why did the model say X" — same retrieval logic as the chat path.
+        app.get("/api/memory/preview", ctx -> {
+            String q = ctx.queryParam("q");
+            JsonObject out = new JsonObject();
+            out.addProperty("block", memory.buildPromptBlock(q == null ? "" : q, 5));
+            ctx.result(out.toString());
             ctx.contentType("application/json");
         });
 
