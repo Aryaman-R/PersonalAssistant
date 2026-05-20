@@ -126,8 +126,10 @@ public class AutomationService {
                     reqBuilder.header("Authorization", "Bearer " + API_KEY);
                 }
 
-                HttpResponse<String> response = client.send(
-                        reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = EgressClient.global().send(
+                        client, reqBuilder.build(), HttpResponse.BodyHandlers.ofString(),
+                        "automation", "trigger:" + name,
+                        EgressClient.classes(EgressClient.DataClass.WEBHOOK_PAYLOAD));
                 int status = response.statusCode();
                 boolean ok = status >= 200 && status < 300;
 

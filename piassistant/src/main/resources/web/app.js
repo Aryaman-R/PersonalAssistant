@@ -3937,6 +3937,125 @@ loadComposioConfig();
 loadMasterServerConfig();
 refreshOpenClawStatus();
 refreshLocalLlmStatus();
+refreshEgress();
+
+// ── PRIVACY · Egress firewall (STRETCH §15) ────────────
+const egressPanic = document.getElementById('egressPanic');
+const egressList = document.getElementById('egressList');
+const egressLog = document.getElementById('egressLog');
+const egressRefreshBtn = document.getElementById('egressRefreshBtn');
+const egressClearBtn = document.getElementById('egressClearBtn');
+
+function humanBytes(n) {
+    if (!n || n < 1024) return (n || 0) + 'B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + 'MB';
+    return (n / 1024 / 1024 / 1024).toFixed(2) + 'GB';
+}
+
+function shortTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toISOString().slice(11, 19);
+}
+
+async function refreshEgress() {
+    if (!egressList) return;
+    try {
+        const r = await fetch(api('/api/egress?logLimit=100'));
+        if (!r.ok) {
+            egressList.innerHTML = '<div class="egress-empty">HTTP ' + r.status + '.</div>';
+            return;
+        }
+        const data = await r.json();
+        if (egressPanic) egressPanic.checked = !!data.panicMode;
+
+        const dests = data.destinations || [];
+        if (dests.length === 0) {
+            egressList.innerHTML = '<div class="egress-empty">No destinations registered.</div>';
+        } else {
+            egressList.innerHTML = dests.map(d => {
+                const isOn = d.effectiveAllowed;
+                const classes = ['egress-row'];
+                if (isOn) classes.push('is-on');
+                if (!isOn) classes.push('is-blocked');
+                if (d.isLocal) classes.push('is-local');
+                const lastCall = d.lastCall ? shortTime(d.lastCall) : '—';
+                return `<div class="${classes.join(' ')}" data-id="${escapeHtml(d.id)}">
+                    <div class="eg-label">
+                        <span class="eg-name">${escapeHtml(d.label)}${d.isLocal ? ' · local' : ''}</span>
+                        <span class="eg-host">${escapeHtml(d.host)}</span>
+                    </div>
+                    <span class="eg-stat" title="calls / blocked">${d.calls}↑ ${d.blocked}🚫</span>
+                    <span class="eg-stat" title="bytes out · bytes in">${humanBytes(d.bytesOut)} ↑ · ${humanBytes(d.bytesIn)} ↓</span>
+                    <span class="eg-stat" title="last call">${lastCall}</span>
+                    <div class="eg-toggle" role="switch" data-id="${escapeHtml(d.id)}" data-allowed="${d.allowed ? '1' : '0'}"></div>
+                </div>`;
+            }).join('');
+            egressList.querySelectorAll('.eg-toggle').forEach(t => {
+                t.addEventListener('click', async () => {
+                    const id = t.getAttribute('data-id');
+                    const wasAllowed = t.getAttribute('data-allowed') === '1';
+                    await fetch(api('/api/egress/destination'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id, allowed: !wasAllowed }),
+                    });
+                    refreshEgress();
+                });
+            });
+        }
+
+        const logEntries = data.log || [];
+        if (logEntries.length === 0) {
+            egressLog.innerHTML = '<div class="egress-empty">No outbound calls yet this session.</div>';
+        } else {
+            egressLog.innerHTML = logEntries.slice().reverse().map(e => {
+                const cls = !e.allowed ? 'row-deny'
+                    : (e.error || e.status >= 400) ? 'row-err' : 'row-ok';
+                const status = !e.allowed ? 'DENY' : (e.status || (e.error ? 'ERR' : '—'));
+                return `<div class="egress-log-row ${cls}">
+                    <span>${shortTime(e.ts)}</span>
+                    <span>${escapeHtml(e.destination)}</span>
+                    <span>${escapeHtml(e.method)} ${escapeHtml(e.url || '/')}</span>
+                    <span>${status}</span>
+                    <span>${humanBytes(e.bytesOut)}↑${humanBytes(e.bytesIn)}↓</span>
+                </div>`;
+            }).join('');
+        }
+    } catch (e) {
+        egressList.innerHTML = '<div class="egress-empty">Backend unreachable.</div>';
+    }
+}
+
+if (egressPanic) {
+    egressPanic.addEventListener('change', async () => {
+        try {
+            await fetch(api('/api/egress/panic'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ on: egressPanic.checked }),
+            });
+        } catch (e) {}
+        refreshEgress();
+    });
+}
+
+if (egressRefreshBtn) egressRefreshBtn.addEventListener('click', refreshEgress);
+
+if (egressClearBtn) {
+    egressClearBtn.addEventListener('click', async () => {
+        if (!confirm('Reset every per-destination counter and clear the call log?')) return;
+        try { await fetch(api('/api/egress/clear'), { method: 'POST' }); } catch (e) {}
+        refreshEgress();
+    });
+}
+
+// Light periodic refresh while the Settings panel is open. 5s is enough to feel
+// "live" without hammering the master.
+setInterval(() => {
+    if (activePanels.has('settings') && egressList) refreshEgress();
+}, 5000);
 
 // ── MEMORY panel (episodic memory · STRETCH §6) ────────
 const memorySearch = document.getElementById('memorySearch');
