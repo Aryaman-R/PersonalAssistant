@@ -76,29 +76,44 @@ java -jar target/sentient-assistant-1.0-SNAPSHOT.jar
 
 Then open **`http://localhost:7070`**. The Javalin server binds `0.0.0.0:7070` by default, so any device on the LAN can reach it at `http://<master-ip>:7070`.
 
-### Optional: install OpenClaw for multi-provider LLM support
+### OpenClaw for multi-provider LLM support
+
+The Setup Wizard installs OpenClaw and configures the provider+key for you
+on first launch. If you'd rather run it from a terminal:
 
 ```bash
-curl -fsSL https://openclaw.ai/install.sh | bash
+curl --proto '=https' --tlsv1.2 -fsSL https://openclaw.ai/install.sh | bash
 openclaw gateway start
 ```
 
-In Settings → OPENCLAW pick a provider, paste your API key, hit **SAVE & RESTART GATEWAY**. The badge flips to `ONLINE`. Toggle the **Chat Engine** dropdown to "OpenClaw (local)".
+Then in Settings → OPENCLAW pick a provider, paste your API key, hit
+**SAVE & RESTART GATEWAY**. The badge flips to `ONLINE`. Toggle the
+**Chat Engine** dropdown to "OpenClaw (local)".
 
 The full setup guide — including **gateway auth tokens**, **connecting to a remote OpenClaw on a VPS**, **Tailscale Funnel** for a public URL, and the **shared-password login** — lives in [`SETUP_OPENCLAW.md`](SETUP_OPENCLAW.md). Read it before exposing the app outside your LAN.
 
 ### Remote access summary
 
+The wizard walks you through every option below; this table is the cheat-sheet.
+
 | Mode | How |
 |---|---|
 | LAN | Open `http://<master-ip>:7070` from any device on the same network. |
-| Tailnet (private) | Install Tailscale on every device. Open `http://<master-tailscale-name>:7070`. |
-| Public internet | Enable Tailscale Funnel from `Settings → REMOTE ACCESS`. Set a shared password first under `Settings → DEVICE LOGIN`. |
+| Tailnet (private) | Install Tailscale on every device. Open `http://<master-tailscale-name>:7070`. The wizard does the install + login for you. |
+| Public internet | Enable Tailscale Funnel from `Settings → REMOTE ACCESS` (or pick "Public URL" in the wizard). Set a shared password first under `Settings → DEVICE LOGIN`. |
 | Remote OpenClaw | Run OpenClaw on a VPS/another device. In `Settings → OPENCLAW`, toggle **Use Remote Gateway** and paste the URL + auth token. |
 
 ## Configuration
 
-### `.env` (required keys)
+The wizard fills everything below in for you on first launch. Everything is
+also editable from `Settings → SETUP WIZARD → RE-RUN` or the individual
+settings groups.
+
+### `.env` (every key is optional)
+
+Each integration just degrades when its key is missing — there are no hard
+requirements. The wizard saves these through `POST /api/setup/env`; you can
+also edit `.env` by hand.
 
 | Key | Purpose |
 |---|---|
@@ -107,12 +122,13 @@ The full setup guide — including **gateway auth tokens**, **connecting to a re
 | `GEMINI_API_KEY` | Camera vision analysis (optional). |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Spotify OAuth. Create app at `developer.spotify.com/dashboard`; redirect URI `http://localhost:7070/api/spotify/callback`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Tasks + Calendar OAuth. Google Cloud Console → enable Tasks + Calendar APIs → redirect URI `http://localhost:7070/api/tasks/google/callback`. |
-| `VOSK_MODEL_PATH` | Path to Vosk model directory (default: `vosk-model-small-en-us-0.15`). Used for the server-side wake-word listener. |
+| `VOSK_MODEL_PATH` | Path to Vosk model directory (default: `vosk-model-small-en-us-0.15`). The wizard's voice step downloads this automatically. |
 
 ### In-app settings
 
 Click **SETTINGS** in the sidebar to configure:
 
+- **SETUP WIZARD**: re-run the full first-launch wizard any time. Skips steps you've already finished.
 - **Chat Engine**: Groq vs OpenClaw
 - **OPENCLAW**: provider, API key, model, gateway auth token, restart button, live status badge
 - **SKILLS · COMPOSIO**: paste consumer key, toggle which toolkits to expose
@@ -144,6 +160,7 @@ piassistant/
 │  │  ├─ GroqService.java       ── built-in LLM (Groq, dual-model routing)
 │  │  ├─ OpenClawService.java   ── local OpenClaw gateway client
 │  │  ├─ OpenClawConfigManager.java ── reads/writes ~/.config/openclaw/openclaw.json5
+│  │  ├─ SetupService.java      ── prereq probes, .env writer, installer runners
 │  │  ├─ SpotifyService.java
 │  │  ├─ GoogleTasksService.java
 │  │  ├─ GoogleCalendarService.java
@@ -157,6 +174,7 @@ piassistant/
 ├─ src/main/resources/web/
 │  ├─ index.html                ── all panels in one document
 │  ├─ app.js                    ── ~3000 LOC, no framework
+│  ├─ setup-wizard.js           ── first-run onboarding wizard
 │  └─ styles.css                ── dark monospace theme
 ├─ pom.xml                      ── Maven build (shade plugin → fat jar)
 
@@ -164,7 +182,10 @@ native/
 ├─ macos/                       ── Swift PM helper for OS-level remote control on Macs
 └─ windows/                     ── .NET 8 helper for OS-level remote control on Windows PCs
 
+install.sh                      ── one-line installer for macOS / Linux
+install.ps1                     ── one-line installer for Windows
 ARCHITECTURE.md                 ── deeper-dive architecture notes + known issues
+SETUP_WIZARD.md                 ── in-UI wizard design + endpoint surface
 reference.md                    ── Claude's working notes for this codebase
 README.md                       ── this file
 ```
@@ -180,7 +201,7 @@ README.md                       ── this file
 ## Known limitations
 
 - **Spotify dev-mode 403s**: Spotify locks `/v1/playlists/{id}/tracks`, recommendations, audio features, and a few others for apps without extended quota. The UI shows a yellow banner explaining this when it hits. The LIBRARY tab (Liked Songs + Recently Played) keeps working regardless. To unblock playlist tracks, submit your app at `developer.spotify.com/dashboard` for extended quota review.
-- **Wake-word detection is best-effort**: Vosk's small EN model is the default; it accepts `jarvis`, `jervis`, `jarvi`, `harvis`, `charvis`. The browser-side `SpeechRecognition` is unreliable in Safari/Firefox — those browsers rely on the server-side Vosk listener (master device only).
+- **Wake-word detection is best-effort**: Vosk's small EN model is the default; it accepts `jarvis`, `jervis`, `jarvi`, `harvis`, `charvis`. The browser-side `SpeechRecognition` is unreliable in Safari/Firefox — those browsers rely on the server-side Vosk listener (master device only). [`SETUP_WIZARD.md §6.5`](SETUP_WIZARD.md) compares OpenWakeWord / Porcupine as alternatives.
 - **Browser `SpeechRecognition` can't choose a mic device**: the mic-device dropdown in Settings claims the chosen device via a brief `getUserMedia` call right before recognition starts; most browsers then use that device. There's no formal API.
 - **One mic, no multi-tenant**: if two clients connect and both activate wake mode, the master device's mic is shared. Barge-in is per-browser via `AnalyserNode`.
 
@@ -196,7 +217,8 @@ Frontend hot-reload isn't wired — the static files are bundled into the jar at
 
 ## Further reading
 
-- **`RUNNING.md`** — end-to-end setup guide: prereqs, build, first launch, OAuth wiring, Tailscale, the macOS helper, troubleshooting.
+- **`SETUP_WIZARD.md`** — first-run onboarding design, REST endpoint surface, security review, wake-word follow-up.
+- **`RUNNING.md`** — end-to-end manual setup guide: prereqs, build, first launch, OAuth wiring, Tailscale, the macOS helper, troubleshooting.
 - **`Phase3.md`** — cross-device control design + per-track test walkthrough (`VIEW_DEVICE`, WebRTC mirror, remote actions, consent, native helper).
 - **`SETUP_OPENCLAW.md`** — OpenClaw provider config, remote-gateway mode, Composio MCP wiring, shared-password auth.
 - **`ARCHITECTURE.md`** — module map, WebSocket message contract, REST surface, continuity issues.
