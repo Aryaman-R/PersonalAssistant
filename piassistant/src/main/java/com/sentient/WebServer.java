@@ -68,6 +68,8 @@ public class WebServer {
     private final java.util.Map<String, WsContext> helperClients = new ConcurrentHashMap<>();
     /** Per-helper-session metadata: name, platform, capabilities. */
     private final java.util.Map<String, JsonObject> helperMeta = new ConcurrentHashMap<>();
+    /** Inbound mesh-sync sessions keyed by WS session id. */
+    private final java.util.Map<String, com.sentient.mesh.MeshSyncSession> meshSessions = new ConcurrentHashMap<>();
     /** One-shot listeners for VIEW_DEVICE / screen_frame round-trips, keyed by requestId. */
     private final java.util.Map<String, java.util.concurrent.CompletableFuture<String>> pendingScreenCaptures =
             new ConcurrentHashMap<>();
@@ -476,6 +478,38 @@ public class WebServer {
                     }
                 } catch (Exception e) {
                     System.err.println("[Helper] message parse error: " + e.getMessage());
+                }
+            });
+        });
+
+        // ── Mesh-sync WS (STRETCH §9, Phase 2) ─────────────────
+        // Master-to-master only — never speaks to browsers. Authentication is
+        // HMAC-based via the per-peer key stored in PeerRegistry; no shared
+        // password gate here because the HMAC itself is the access control.
+        app.ws("/mesh-sync", ws -> {
+            ws.onConnect(ctx -> {
+                com.sentient.mesh.MeshSyncSession sess = new com.sentient.mesh.MeshSyncSession(
+                        mesh,
+                        out -> {
+                            try { ctx.send(out.toString()); }
+                            catch (Exception ignored) {}
+                        });
+                meshSessions.put(ctx.sessionId(), sess);
+                System.out.println("[mesh-sync] inbound connected: " + ctx.sessionId());
+            });
+            ws.onClose(ctx -> {
+                com.sentient.mesh.MeshSyncSession sess = meshSessions.remove(ctx.sessionId());
+                if (sess != null) sess.close();
+                System.out.println("[mesh-sync] inbound closed: " + ctx.sessionId());
+            });
+            ws.onMessage(ctx -> {
+                com.sentient.mesh.MeshSyncSession sess = meshSessions.get(ctx.sessionId());
+                if (sess == null) return;
+                try {
+                    JsonObject m = gson.fromJson(ctx.message(), JsonObject.class);
+                    sess.onMessage(m);
+                } catch (Exception e) {
+                    System.err.println("[mesh-sync] parse error: " + e.getMessage());
                 }
             });
         });
@@ -2274,11 +2308,104 @@ public class WebServer {
             ctx.contentType("application/json");
         });
 
-        // ── Mesh (STRETCH §9) Endpoints — Phase 1: info only ───
-        // Phase 2 will land /api/mesh/pair/* (generate/redeem) + the
-        // /mesh-sync WS endpoint. For now the panel just reads info.
+        // ── Mesh (STRETCH §9) Endpoints ─────────────────────────
         app.get("/api/mesh/info", ctx -> {
             ctx.result(mesh.infoJson().toString());
+            ctx.contentType("application/json");
+        });
+
+        // Initiator: generate a 6-word pairing phrase that the joiner will
+        // type on its side. Phrase expires in 60 s; pending state is
+        // in-memory only.
+        app.post("/api/mesh/pair/start", ctx -> {
+            String phrase = mesh.generatePairingPhrase();
+            JsonObject out = new JsonObject();
+            out.addProperty("phrase", phrase);
+            out.addProperty("expiresMs", System.currentTimeMillis()
+                    + com.sentient.mesh.PeerRegistry.PAIRING_WINDOW_MS);
+            ctx.result(out.toString());
+            ctx.contentType("application/json");
+        });
+
+        // Joiner: take a host:port + phrase, dial the initiator's
+        // /mesh-sync, run the handshake, do one round of sync.
+        app.post("/api/mesh/pair/redeem", ctx -> {
+            JsonObject body = ctx.body() == null || ctx.body().isBlank()
+                    ? new JsonObject() : gson.fromJson(ctx.body(), JsonObject.class);
+            String host = getStr(body, "host", "").trim();
+            String phrase = getStr(body, "phrase", "").trim();
+            if (host.isEmpty() || phrase.isEmpty()) {
+                ctx.status(400).result("{\"error\":\"host and phrase required\"}");
+                ctx.contentType("application/json");
+                return;
+            }
+            String url = host.startsWith("ws://") || host.startsWith("wss://")
+                    ? (host.endsWith("/mesh-sync") ? host : host + "/mesh-sync")
+                    : "ws://" + host + "/mesh-sync";
+            try {
+                com.sentient.mesh.MeshSyncClient client = new com.sentient.mesh.MeshSyncClient(
+                        mesh, java.net.URI.create(url));
+                com.sentient.mesh.MeshSyncClient.Result res = client.pairWith(phrase)
+                        .get(30, java.util.concurrent.TimeUnit.SECONDS);
+                JsonObject out = new JsonObject();
+                out.addProperty("success", res.success);
+                if (res.remoteMasterId != null) out.addProperty("peerMasterId", res.remoteMasterId);
+                out.addProperty("opsReceived", res.opsReceived);
+                out.addProperty("opsSent", res.opsSent);
+                if (!res.success) {
+                    out.addProperty("errorCode", res.errorCode == null ? "unknown" : res.errorCode);
+                    out.addProperty("errorMessage", res.errorMessage == null ? "" : res.errorMessage);
+                    ctx.status(400);
+                }
+                ctx.result(out.toString());
+                ctx.contentType("application/json");
+            } catch (Exception e) {
+                ctx.status(500).result("{\"error\":\"" + (e.getMessage() == null ? "exception" : e.getMessage()).replace("\"", "'") + "\"}");
+                ctx.contentType("application/json");
+            }
+        });
+
+        // Trigger an authenticated re-sync with an already-paired peer
+        // (using stored HMAC key). Returns op counts.
+        app.post("/api/mesh/sync/{peerMasterId}", ctx -> {
+            String peerId = ctx.pathParam("peerMasterId");
+            com.sentient.mesh.PeerRegistry.Peer peer = mesh.registry().get(peerId);
+            if (peer == null) {
+                ctx.status(404).result("{\"error\":\"unknown peer\"}");
+                return;
+            }
+            if (peer.url == null || peer.url.isEmpty()) {
+                ctx.status(400).result("{\"error\":\"peer has no stored url\"}");
+                return;
+            }
+            try {
+                com.sentient.mesh.MeshSyncClient client = new com.sentient.mesh.MeshSyncClient(
+                        mesh, java.net.URI.create(peer.url));
+                com.sentient.mesh.MeshSyncClient.Result res = client.connectAuthenticated(peerId)
+                        .get(30, java.util.concurrent.TimeUnit.SECONDS);
+                JsonObject out = new JsonObject();
+                out.addProperty("success", res.success);
+                out.addProperty("opsReceived", res.opsReceived);
+                out.addProperty("opsSent", res.opsSent);
+                if (!res.success) {
+                    out.addProperty("errorCode", res.errorCode == null ? "unknown" : res.errorCode);
+                    out.addProperty("errorMessage", res.errorMessage == null ? "" : res.errorMessage);
+                    ctx.status(400);
+                }
+                ctx.result(out.toString());
+                ctx.contentType("application/json");
+            } catch (Exception e) {
+                ctx.status(500).result("{\"error\":\"" + (e.getMessage() == null ? "exception" : e.getMessage()).replace("\"", "'") + "\"}");
+            }
+        });
+
+        // Remove a peer.
+        app.delete("/api/mesh/peers/{peerMasterId}", ctx -> {
+            String peerId = ctx.pathParam("peerMasterId");
+            boolean removed = mesh.registry().remove(peerId);
+            JsonObject out = new JsonObject();
+            out.addProperty("success", removed);
+            ctx.status(removed ? 200 : 404).result(out.toString());
             ctx.contentType("application/json");
         });
 
