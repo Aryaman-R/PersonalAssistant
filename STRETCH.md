@@ -134,7 +134,7 @@ profile, task list, calendar context, and TTS voice.
 
 ---
 
-## 4. Local LLM offline mode
+## 4. Local LLM offline mode ✅ *shipped*
 
 **Motivation.** OpenClaw + Groq is great until the wifi dies, the
 provider rate-limits you, or you don't want a third party seeing the
@@ -222,7 +222,7 @@ deep research wants Sonnet-class.
 
 ---
 
-## 6. Episodic memory & knowledge graph
+## 6. Episodic memory & knowledge graph ✅ *episodic half shipped*
 
 **Motivation.** A 20-message rolling history is a goldfish brain. A
 genuine personal assistant should remember that your sister's wedding
@@ -574,7 +574,7 @@ log shows the full prompt + tools used for any past response.
 
 ---
 
-## 15. Privacy egress firewall
+## 15. Privacy egress firewall ✅ *shipped*
 
 **Motivation.** Even with a local LLM, the assistant talks to
 Google, Spotify, Composio, OpenClaw providers. A user should be
