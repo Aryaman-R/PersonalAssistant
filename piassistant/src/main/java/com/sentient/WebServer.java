@@ -9,6 +9,7 @@ import com.sentient.service.GoogleTasksService;
 import com.sentient.service.GoogleCalendarService;
 import com.sentient.service.GroqService;
 import com.sentient.service.Listener;
+import com.sentient.service.LocalLlmService;
 import com.sentient.service.OpenClawConfigManager;
 import com.sentient.service.OpenClawService;
 import com.sentient.service.SetupService;
@@ -43,6 +44,7 @@ public class WebServer {
     private final Gson gson = new Gson();
     private final GroqService groq;
     private final OpenClawService openClaw;
+    private final LocalLlmService localLlm;
     private final OpenClawConfigManager openClawConfig;
     private final SpotifyService spotify;
     private final AutomationService automation;
@@ -75,6 +77,7 @@ public class WebServer {
     public WebServer() {
         this.groq = new GroqService();
         this.openClaw = new OpenClawService();
+        this.localLlm = new LocalLlmService();
         this.openClawConfig = new OpenClawConfigManager();
         hydrateOpenClawFromConfig();
         this.spotify = new SpotifyService();
@@ -590,9 +593,34 @@ public class WebServer {
     }
 
     private void handleChat(String text, boolean playOnServer, String modelOverride, String imageBase64, String fileName, String fileType, String engine) {
-        // Pick the engine. Falls back to Groq if OpenClaw is requested but unreachable.
+        // Pick the engine. "auto" walks the configured chain (OpenClaw → Groq → Local)
+        // with each hop's own reachability check. The explicit engines fall back to
+        // Groq if they're unreachable, so a stale dropdown setting still gets a reply.
         java.util.concurrent.CompletableFuture<String> future;
-        if ("openclaw".equalsIgnoreCase(engine)) {
+        String chosen = engine == null ? "groq" : engine.toLowerCase();
+
+        if ("auto".equals(chosen)) {
+            chosen = pickAutoEngine();
+            if (!"groq".equals(chosen)) {
+                JsonObject info = new JsonObject();
+                info.addProperty("type", "system");
+                info.addProperty("text", "auto → " + chosen);
+                broadcast(info);
+            }
+        }
+
+        if ("local".equals(chosen)) {
+            if (localLlm.isUp()) {
+                future = localLlm.processCommand(text, modelOverride, imageBase64, fileName, fileType);
+            } else {
+                System.err.println("[WebServer] Local LLM selected but server unreachable — falling back to Groq.");
+                JsonObject warn = new JsonObject();
+                warn.addProperty("type", "system");
+                warn.addProperty("text", "Local LLM is offline — using Groq for this turn.");
+                broadcast(warn);
+                future = groq.processCommand(text, modelOverride, imageBase64, fileName, fileType);
+            }
+        } else if ("openclaw".equals(chosen)) {
             if (openClaw.isGatewayUp()) {
                 future = openClaw.processCommand(text, modelOverride, imageBase64, fileName, fileType);
             } else {
@@ -1057,6 +1085,20 @@ public class WebServer {
         stateMsg.addProperty("listening", false);
         broadcast(stateMsg);
         System.out.println("[WebServer] Response stopped.");
+    }
+
+    /**
+     * Pick a concrete engine name when the user has selected "auto". Order matches
+     * the doc in {@code STRETCH.md §4}: prefer OpenClaw (richer routing + tools),
+     * fall back to Groq (fastest cloud path with a key), then Local (always-on).
+     */
+    private String pickAutoEngine() {
+        if (openClaw.isGatewayUp()) return "openclaw";
+        if (groq.hasApiKey()) return "groq";
+        if (localLlm.isUp()) return "local";
+        // Nothing's actually up — let the explicit Groq path produce its own
+        // "key missing" or "network down" message rather than guessing harder.
+        return "groq";
     }
 
     private List<String[]> extractCommands(String response) {
@@ -1803,6 +1845,53 @@ public class WebServer {
                 return;
             }
             String reply = openClaw.testChat();
+            JsonObject result = new JsonObject();
+            if (reply.startsWith("Error:") || reply.startsWith("Sorry,")) {
+                result.addProperty("error", reply);
+                ctx.status(502);
+            } else {
+                result.addProperty("success", true);
+                result.addProperty("reply", reply);
+            }
+            ctx.result(result.toString());
+            ctx.contentType("application/json");
+        });
+
+        // ── Local LLM (llama.cpp / Ollama / LM Studio / vLLM …) ──
+        // The user runs the model server themselves; we just speak the OpenAI
+        // compat HTTP shape against whichever URL they configure.
+        app.get("/api/local-llm/status", ctx -> {
+            ctx.result(localLlm.getStatus().toString());
+            ctx.contentType("application/json");
+        });
+
+        app.post("/api/local-llm/config", ctx -> {
+            JsonObject body = ctx.body() == null || ctx.body().isBlank()
+                    ? new JsonObject() : gson.fromJson(ctx.body(), JsonObject.class);
+            if (body.has("baseUrl")) localLlm.setBaseUrl(getStr(body, "baseUrl", ""));
+            if (body.has("model")) localLlm.setModel(getStr(body, "model", ""));
+            if (body.has("authToken")) localLlm.setAuthToken(getStr(body, "authToken", ""));
+            if (body.has("enabled")) localLlm.setEnabled(body.get("enabled").getAsBoolean());
+            localLlm.persist();
+            JsonObject out = localLlm.getStatus();
+            out.addProperty("success", true);
+            ctx.result(out.toString());
+            ctx.contentType("application/json");
+        });
+
+        app.post("/api/local-llm/test", ctx -> {
+            if (!localLlm.isEnabled()) {
+                ctx.status(400).result("{\"error\":\"Local LLM is disabled. Toggle it on first.\"}");
+                ctx.contentType("application/json");
+                return;
+            }
+            if (!localLlm.isUp()) {
+                ctx.status(503).result("{\"error\":\"Local LLM unreachable at " + localLlm.getBaseUrl()
+                        + ". Is the server running?\"}");
+                ctx.contentType("application/json");
+                return;
+            }
+            String reply = localLlm.testChat();
             JsonObject result = new JsonObject();
             if (reply.startsWith("Error:") || reply.startsWith("Sorry,")) {
                 result.addProperty("error", reply);

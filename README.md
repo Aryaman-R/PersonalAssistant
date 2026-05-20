@@ -26,7 +26,11 @@ A personal AI assistant that runs on one device and is reachable from every scre
 
 ## What it does
 
-- **Chat with an LLM** via either a local **OpenClaw** install (any provider — Anthropic, OpenAI, Google, Groq, OpenRouter, xAI, DeepSeek, Moonshot, or a custom OpenAI-compatible endpoint) or the built-in **Groq** path. Engine toggle in Settings; fallback is automatic when the chosen engine is unreachable.
+- **Chat with an LLM** via three engines, picked from `Settings → Chat Engine`:
+  - **OpenClaw (local gateway)** — proxies to any provider (Anthropic, OpenAI, Google, Groq, OpenRouter, xAI, DeepSeek, Moonshot, custom).
+  - **Groq (cloud)** — built-in, fastest, needs `GROQ_API_KEY`.
+  - **Local LLM (offline)** — point at any OpenAI-compatible server you run yourself: `llama.cpp`'s `./server`, Ollama's `:11434/v1`, LM Studio, vLLM. The assistant keeps working when the internet doesn't.
+  - **Auto** — walks the chain `OpenClaw → Groq → Local`, picking whichever is reachable on each turn. Falls through transparently if one goes down mid-conversation.
 - **Voice in two modes**:
   - **HOME panel** — *push-to-talk*. Hold the mic button while you speak. Mic is otherwise silent.
   - **VOICE panel** — *always-listening avatar mode*. A pulsing orb in the centre reacts to states (idle / heard wake word / transcribing / thinking / speaking). Wake word: **"Jarvis"**. Both server-side Vosk and browser-side `SpeechRecognition` listen in parallel — whichever fires first wins. Barge-in works: speak over the bot to interrupt it.
@@ -129,8 +133,9 @@ also edit `.env` by hand.
 Click **SETTINGS** in the sidebar to configure:
 
 - **SETUP WIZARD**: re-run the full first-launch wizard any time. Skips steps you've already finished.
-- **Chat Engine**: Groq vs OpenClaw
+- **Chat Engine**: Auto / Groq / OpenClaw / Local LLM
 - **OPENCLAW**: provider, API key, model, gateway auth token, restart button, live status badge
+- **LOCAL LLM (OFFLINE)**: base URL, model name, optional auth token, live status badge. Run llama.cpp / Ollama / LM Studio yourself; Sentient connects via the OpenAI-compat endpoint.
 - **SKILLS · COMPOSIO**: paste consumer key, toggle which toolkits to expose
 - **MASTER SERVER**: if you're a remote client, point at the master device's IP:port
 - **AUDIO**: per-browser mic + speaker device pickers
@@ -159,6 +164,7 @@ piassistant/
 │  ├─ service/
 │  │  ├─ GroqService.java       ── built-in LLM (Groq, dual-model routing)
 │  │  ├─ OpenClawService.java   ── local OpenClaw gateway client
+│  │  ├─ LocalLlmService.java   ── offline LLM (llama.cpp / Ollama / LM Studio …)
 │  │  ├─ OpenClawConfigManager.java ── reads/writes ~/.config/openclaw/openclaw.json5
 │  │  ├─ SetupService.java      ── prereq probes, .env writer, installer runners
 │  │  ├─ SpotifyService.java

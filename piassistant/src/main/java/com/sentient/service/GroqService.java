@@ -52,6 +52,14 @@ public class GroqService {
         conversationHistory.clear();
     }
 
+    /**
+     * True when a Groq API key is configured. Used by the engine router to
+     * decide whether "auto" can plausibly route here.
+     */
+    public boolean hasApiKey() {
+        return GROQ_API_KEY != null && !GROQ_API_KEY.isBlank();
+    }
+
     public CompletableFuture<String> processCommand(String userPrompt) {
         return processCommand(userPrompt, "AUTO", null, null, null);
     }

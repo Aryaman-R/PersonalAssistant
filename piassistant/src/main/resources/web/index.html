@@ -427,8 +427,10 @@
                     <label class="setting-item">
                         <span class="setting-label">Chat Engine</span>
                         <select id="settingEngine" class="setting-select">
-                            <option value="groq">Groq (built-in)</option>
-                            <option value="openclaw">OpenClaw (local)</option>
+                            <option value="auto">Auto (OpenClaw → Groq → Local)</option>
+                            <option value="groq">Groq (cloud)</option>
+                            <option value="openclaw">OpenClaw (local gateway)</option>
+                            <option value="local">Local LLM (offline)</option>
                         </select>
                     </label>
                     <label class="setting-item">
@@ -517,6 +519,47 @@
                         <button class="timer-btn cancel-btn" id="openclawTestBtn">TEST CHAT</button>
                     </div>
                     <div id="openclawSaveStatus" class="setting-feedback"></div>
+                </div>
+
+                <!-- ── Local LLM (offline fallback) ───────────────── -->
+                <div class="settings-group" id="settingsLocalLlm">
+                    <div class="panel-sub-header">LOCAL LLM (OFFLINE)</div>
+                    <div class="setting-status-row">
+                        <span class="setting-label">Server Status</span>
+                        <span class="setting-status" id="localLlmStatusBadge">CHECKING…</span>
+                        <button class="timer-btn play-btn" id="localLlmRefreshBtn" style="margin-left:auto">↻ REFRESH</button>
+                    </div>
+                    <div class="setting-hint">
+                        Point Sentient at any locally-hosted, OpenAI-compatible chat server: <code>llama.cpp</code>'s
+                        built-in <code>./server</code>, Ollama (its <code>:11434/v1</code> endpoint), LM Studio,
+                        vLLM, or text-generation-webui's OpenAI extension. The Auto engine falls through to this
+                        one when both OpenClaw and Groq are unavailable — so your assistant keeps working when
+                        the network doesn't.
+                        <br><br>
+                        Quick start with llama.cpp:
+                        <code class="code-block">./server -m ./qwen2.5-7b-instruct-q4_k_m.gguf --port 8080 --host 127.0.0.1</code>
+                    </div>
+                    <label class="setting-item">
+                        <span class="setting-label">Enabled</span>
+                        <input type="checkbox" id="localLlmEnabled" class="setting-toggle">
+                    </label>
+                    <label class="setting-item">
+                        <span class="setting-label">Base URL</span>
+                        <input type="text" class="form-input setting-input" id="localLlmBaseUrl" placeholder="http://127.0.0.1:8080" autocomplete="off">
+                    </label>
+                    <label class="setting-item">
+                        <span class="setting-label">Model Name</span>
+                        <input type="text" class="form-input setting-input" id="localLlmModel" placeholder="local (or whatever the server expects)" autocomplete="off">
+                    </label>
+                    <label class="setting-item">
+                        <span class="setting-label">Auth Token (optional)</span>
+                        <input type="password" class="form-input setting-input" id="localLlmAuthToken" placeholder="(leave blank for unauthenticated)" autocomplete="off">
+                    </label>
+                    <div class="settings-actions">
+                        <button class="timer-btn play-btn" id="localLlmSaveBtn">SAVE</button>
+                        <button class="timer-btn cancel-btn" id="localLlmTestBtn">TEST CHAT</button>
+                    </div>
+                    <div id="localLlmSaveStatus" class="setting-feedback"></div>
                 </div>
 
                 <!-- ── Composio skills ─────────────────────────────── -->

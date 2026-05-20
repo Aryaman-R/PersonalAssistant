@@ -3668,6 +3668,101 @@ if (openclawTestBtn) {
     });
 }
 
+// ── Local LLM (offline) configuration ───────────────────
+const localLlmEnabled = document.getElementById('localLlmEnabled');
+const localLlmBaseUrl = document.getElementById('localLlmBaseUrl');
+const localLlmModel = document.getElementById('localLlmModel');
+const localLlmAuthToken = document.getElementById('localLlmAuthToken');
+const localLlmSaveBtn = document.getElementById('localLlmSaveBtn');
+const localLlmTestBtn = document.getElementById('localLlmTestBtn');
+const localLlmSaveStatus = document.getElementById('localLlmSaveStatus');
+const localLlmStatusBadge = document.getElementById('localLlmStatusBadge');
+const localLlmRefreshBtn = document.getElementById('localLlmRefreshBtn');
+
+function setLocalLlmStatus(state, text) {
+    if (!localLlmStatusBadge) return;
+    localLlmStatusBadge.className = `setting-status status-${state}`;
+    localLlmStatusBadge.textContent = text;
+}
+
+async function refreshLocalLlmStatus() {
+    setLocalLlmStatus('checking', 'CHECKING…');
+    try {
+        const r = await fetch(api('/api/local-llm/status'));
+        if (!r.ok) { setLocalLlmStatus('error', 'BACKEND ERROR'); return; }
+        const d = await r.json();
+        if (localLlmBaseUrl && !localLlmBaseUrl.value && d.baseUrl) localLlmBaseUrl.value = d.baseUrl;
+        if (localLlmModel && !localLlmModel.value && d.model) localLlmModel.value = d.model;
+        if (localLlmEnabled) localLlmEnabled.checked = !!d.enabled;
+        if (!d.enabled) {
+            setLocalLlmStatus('offline', 'DISABLED');
+        } else if (d.up) {
+            setLocalLlmStatus('online', `ONLINE (${d.baseUrl})`);
+        } else {
+            setLocalLlmStatus('error', `UNREACHABLE (${d.baseUrl})`);
+        }
+    } catch (e) {
+        setLocalLlmStatus('error', 'BACKEND UNREACHABLE');
+    }
+}
+
+if (localLlmRefreshBtn) localLlmRefreshBtn.addEventListener('click', refreshLocalLlmStatus);
+
+if (localLlmSaveBtn) {
+    localLlmSaveBtn.addEventListener('click', async () => {
+        if (!localLlmSaveStatus) return;
+        localLlmSaveStatus.textContent = 'Saving…';
+        localLlmSaveStatus.className = 'setting-feedback';
+        const body = {
+            enabled: !!(localLlmEnabled && localLlmEnabled.checked),
+            baseUrl: (localLlmBaseUrl && localLlmBaseUrl.value || '').trim(),
+            model: (localLlmModel && localLlmModel.value || '').trim(),
+            authToken: (localLlmAuthToken && localLlmAuthToken.value || '').trim(),
+        };
+        try {
+            const r = await fetch(api('/api/local-llm/config'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const d = await r.json();
+            if (!r.ok || d.error) {
+                localLlmSaveStatus.className = 'setting-feedback error';
+                localLlmSaveStatus.textContent = d.error || `Save failed (HTTP ${r.status})`;
+            } else {
+                localLlmSaveStatus.className = 'setting-feedback success';
+                localLlmSaveStatus.textContent = 'Saved. ' + (d.up ? 'Server is reachable.' : 'Server not reachable yet — start it then hit REFRESH.');
+                refreshLocalLlmStatus();
+            }
+        } catch (e) {
+            localLlmSaveStatus.className = 'setting-feedback error';
+            localLlmSaveStatus.textContent = 'Backend unreachable.';
+        }
+    });
+}
+
+if (localLlmTestBtn) {
+    localLlmTestBtn.addEventListener('click', async () => {
+        if (!localLlmSaveStatus) return;
+        localLlmSaveStatus.textContent = 'Testing…';
+        localLlmSaveStatus.className = 'setting-feedback';
+        try {
+            const r = await fetch(api('/api/local-llm/test'), { method: 'POST' });
+            const d = await r.json();
+            if (!r.ok || d.error) {
+                localLlmSaveStatus.className = 'setting-feedback error';
+                localLlmSaveStatus.textContent = d.error || `Test failed (HTTP ${r.status})`;
+            } else {
+                localLlmSaveStatus.className = 'setting-feedback success';
+                localLlmSaveStatus.textContent = d.reply ? `OK: "${d.reply.slice(0, 80)}"` : 'OK — server responded.';
+            }
+        } catch (e) {
+            localLlmSaveStatus.className = 'setting-feedback error';
+            localLlmSaveStatus.textContent = 'Backend unreachable.';
+        }
+    });
+}
+
 // ── Composio toolkit picker ─────────────────────────────
 const composioKey = document.getElementById('composioKey');
 const composioGrid = document.getElementById('composioGrid');
@@ -3829,6 +3924,7 @@ loadOpenClawConfig();
 loadComposioConfig();
 loadMasterServerConfig();
 refreshOpenClawStatus();
+refreshLocalLlmStatus();
 
 // ═══════════════════════════════════════════════════════
 // VOICE tab — wake word + barge-in conversational mode
